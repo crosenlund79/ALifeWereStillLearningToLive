@@ -1,0 +1,21 @@
+; Engine configuration file.
+
+config_version=5
+
+[application]
+
+config/name="A Life We're Still Learning to Live"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.3", "GL Compatibility")
+
+[display]
+
+window/size/viewport_width=1672
+window/size/viewport_height=941
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
