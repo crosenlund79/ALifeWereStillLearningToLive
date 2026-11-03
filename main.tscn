@@ -1,8 +1,9 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Texture2D" path="res://DeepForest.png" id="1"]
 [ext_resource type="AudioStream" path="res://A Life We're Still Learning to.mp3" id="2"]
 [ext_resource type="Script" path="res://waveform.gd" id="3"]
+[ext_resource type="Script" path="res://music.gd" id="4"]
 
 [node name="Main" type="Control"]
 layout_mode = 3
@@ -36,3 +37,4 @@ script = ExtResource("3")
 [node name="Music" type="AudioStreamPlayer" parent="."]
 stream = ExtResource("2")
 autoplay = true
+script = ExtResource("4")
