@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://d17wfvwawc5ds"
+path="res://.godot/imported/A Life We're Still Learning to.mp3-12657ba1316f44758bfd38166d32bb9a.mp3str"
+
+[deps]
+
+source_file="res://music/A Life We're Still Learning to.mp3"
+dest_files=["res://.godot/imported/A Life We're Still Learning to.mp3-12657ba1316f44758bfd38166d32bb9a.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4
