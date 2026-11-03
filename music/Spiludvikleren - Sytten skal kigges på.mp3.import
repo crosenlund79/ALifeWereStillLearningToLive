@@ -1,0 +1,19 @@
+[remap]
+
+importer="mp3"
+type="AudioStreamMP3"
+uid="uid://t1dga5rcf5j0"
+path="res://.godot/imported/Spiludvikleren - Sytten skal kigges på.mp3-4aac5b24ecd1c4e87f315c9b3a3c34c6.mp3str"
+
+[deps]
+
+source_file="res://music/Spiludvikleren - Sytten skal kigges på.mp3"
+dest_files=["res://.godot/imported/Spiludvikleren - Sytten skal kigges på.mp3-4aac5b24ecd1c4e87f315c9b3a3c34c6.mp3str"]
+
+[params]
+
+loop=false
+loop_offset=0
+bpm=0
+beat_count=0
+bar_beats=4
