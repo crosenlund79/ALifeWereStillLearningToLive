@@ -4,6 +4,8 @@ const GOLD := Color(0.96, 0.82, 0.52)
 const IDLE_TIME := 4.0
 const FADE_TIME := 0.8
 const SCROLL_SPEED := 70.0
+const LIGHT_FONT := preload("res://Font/LEMONMILK-Light.otf")
+const BOLD_FONT := preload("res://Font/LEMONMILK-Bold.otf")
 const EQ_LABELS := ["60", "150", "400", "1k", "2.4k", "6k", "15k"]
 
 @onready var music = $"../Music"
@@ -44,6 +46,7 @@ func _ready() -> void:
 	theme = _make_theme()
 
 	scroll_title.add_theme_font_size_override("font_size", 26)
+	scroll_title.add_theme_font_override("font", BOLD_FONT)
 	scroll_title.add_theme_color_override("font_color", Color(GOLD, 0.8))
 	scroll_title.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.5))
 	scroll_title.add_theme_constant_override("shadow_offset_y", 2)
@@ -63,6 +66,7 @@ func _ready() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	title.add_theme_font_size_override("font_size", 18)
+	title.add_theme_font_override("font", BOLD_FONT)
 	box.add_child(title)
 
 	var seek_row := HBoxContainer.new()
@@ -79,45 +83,40 @@ func _ready() -> void:
 	time_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	seek_row.add_child(time_label)
 
+	# One row of icon buttons (drawn in _draw_icon); tooltips list the shortcuts.
 	var buttons := HBoxContainer.new()
-	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	buttons.add_theme_constant_override("separation", 6)
 	box.add_child(buttons)
-	_button(buttons, "Prev", music.previous_track, "Previous track (P)")
-	_button(buttons, "-5s", music.seek_by.bind(-music.SEEK_STEP), "Rewind 5 seconds (Left)")
-	play_button = _button(buttons, "Pause", music.toggle_pause, "Play / Pause (Space)")
-	_button(buttons, "Restart", music.restart, "Restart song after 2 seconds (Enter)")
-	_button(buttons, "+5s", music.seek_by.bind(music.SEEK_STEP), "Forward 5 seconds (Right)")
-	_button(buttons, "Next", music.next_track, "Next track (N)")
-
-	var options := HBoxContainer.new()
-	options.alignment = BoxContainer.ALIGNMENT_CENTER
-	options.add_theme_constant_override("separation", 6)
-	box.add_child(options)
-	shuffle_button = _button(options, "Shuffle", music.toggle_shuffle, "Shuffle (S)")
-	shuffle_button.toggle_mode = true
-	repeat_button = _button(options, "", music.cycle_repeat, "Repeat: Off / All / One (R)")
-	repeat_button.custom_minimum_size.x = 104
-	mute_button = _button(options, "", music.toggle_mute, "Mute / Unmute (M)")
-	mute_button.custom_minimum_size = Vector2(34, 26)
-	mute_button.draw.connect(_draw_speaker)
+	shuffle_button = _icon_button(buttons, "shuffle", music.toggle_shuffle, "Shuffle (S)")
+	_icon_button(buttons, "prev", music.previous_track, "Previous track (P)")
+	_icon_button(buttons, "rewind", music.seek_by.bind(-music.SEEK_STEP), "Rewind 5 seconds (Left)")
+	play_button = _icon_button(buttons, "play", music.toggle_pause, "Play / Pause (Space)")
+	_icon_button(buttons, "forward", music.seek_by.bind(music.SEEK_STEP), "Forward 5 seconds (Right)")
+	_icon_button(buttons, "next", music.next_track, "Next track (N)")
+	repeat_button = _icon_button(buttons, "repeat", music.cycle_repeat, "Repeat: Off / All / One (R)")
+	_icon_button(buttons, "restart", music.restart, "Restart song after 2 seconds (Enter)")
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = SIZE_EXPAND_FILL
+	buttons.add_child(spacer)
+	mute_button = _icon_button(buttons, "speaker", music.toggle_mute, "Mute / Unmute (M)")
 	volume_slider = _slider(music.volume * 100.0, 100.0, _on_volume)
 	volume_slider.custom_minimum_size.x = 110
 	volume_slider.tooltip_text = "Volume (Up / Down, 5% steps)"
-	options.add_child(volume_slider)
-	volume_label.custom_minimum_size.x = 44
-	options.add_child(volume_label)
-	_button(options, "Fullscreen", music.toggle_fullscreen, "Fullscreen (F)")
-	lock_button = _button(options, "Lock", _on_lock, "Keep the interface visible (Esc shows / hides it)")
+	buttons.add_child(volume_slider)
+	volume_label.custom_minimum_size.x = 52
+	volume_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	buttons.add_child(volume_label)
+	_icon_button(buttons, "fullscreen", music.toggle_fullscreen, "Fullscreen (F)")
+	lock_button = _icon_button(buttons, "lock", _on_lock, "Keep the interface visible (Esc shows / hides it)")
 	lock_button.toggle_mode = true
-	var quit_button := _button(options, "Quit", music.quit_app, "Quit TinserBox (Ctrl+Q)")
-	quit_button.add_theme_color_override("font_color", Color(1.0, 0.62, 0.45))
+	_icon_button(buttons, "quit", music.quit_app, "Quit TinserBox (Ctrl+Q)")
 
 	var tabs := TabContainer.new()
 	tabs.size_flags_vertical = SIZE_EXPAND_FILL
 	tabs.focus_mode = FOCUS_NONE
 	tabs.get_tab_bar().focus_mode = FOCUS_NONE
 	box.add_child(tabs)
+	box.move_child(tabs, 0)  # Navigation tabs sit at the top of the overlay.
 
 	# Playlist
 	playlist.name = "Playlist"
@@ -132,13 +131,15 @@ func _ready() -> void:
 	var mode_select := OptionButton.new()
 	mode_select.add_item("Waveform")
 	mode_select.add_item("Square Grid")
+	mode_select.add_item("Seven Waves")
+	mode_select.add_item("Retro Spectrum")
+	mode_select.add_item("Glowing Orbs")
 	mode_select.item_selected.connect(func(i: int): visualizer.mode = i)
 	_row(vis, "Visualizer", mode_select)
 	var sensitivity: float = music.app_setting("sensitivity", 100.0)
 	visualizer.sensitivity = sensitivity / 100.0
 	_row(vis, "Sensitivity", _slider(sensitivity, 200.0, _on_sensitivity))
 	_row(vis, "Intensity", _slider(50.0, 100.0, func(v: float): visualizer.intensity_scale = v / 50.0))
-	_row(vis, "Hue", _slider(50.0, 100.0, func(v: float): visualizer.hue_sensitivity = v / 100.0))
 	scroll_toggle.button_pressed = true
 	_row(vis, "Scrolling title", scroll_toggle)
 	frame_toggle.button_pressed = music.app_setting("hide_frame", false)
@@ -254,10 +255,8 @@ func _process(delta: float) -> void:
 	if not seeking:
 		seek_bar.value = music.get_playback_position()
 	time_label.text = "%s / %s" % [_time(seek_bar.value), _time(length)]
-	play_button.text = "Pause" if music.playing and not music.stream_paused else "Play"
-	shuffle_button.set_pressed_no_signal(music.shuffle)
-	repeat_button.text = "Repeat: " + ["Off", "All", "One"][music.repeat]
-	mute_button.queue_redraw()
+	for b in [play_button, shuffle_button, repeat_button, mute_button, lock_button]:
+		b.queue_redraw()
 	volume_label.text = "Muted" if music.muted else "%d%%" % roundi(music.volume * 100.0)
 	syncing = true
 	volume_slider.value = 0.0 if music.muted else music.volume * 100.0
@@ -266,9 +265,9 @@ func _process(delta: float) -> void:
 
 func _on_track_changed(index: int) -> void:
 	if music.tracks.is_empty():
-		title.text = "No tracks in music/"
+		title.text = "NO TRACKS IN MUSIC/"
 		return
-	title.text = music.tracks[index].get_file().get_basename()
+	title.text = music.tracks[index].get_file().get_basename().to_upper()
 	scroll_title.text = title.text
 	scroll_title.reset_size()
 	scroll_title.position.x = size.x
@@ -324,20 +323,97 @@ func _update_frame() -> void:
 	window.position = pos
 
 
-## Speaker icon for the mute button: cone plus sound waves, or a cross when muted.
-func _draw_speaker() -> void:
-	var c := mute_button.size * 0.5 + Vector2(-5, 0)
-	var col := Color(GOLD, 0.95)
-	mute_button.draw_colored_polygon(PackedVector2Array([
-		c + Vector2(-6, -3), c + Vector2(-2, -3), c + Vector2(3, -8),
-		c + Vector2(3, 8), c + Vector2(-2, 3), c + Vector2(-6, 3)]), col)
-	if music.muted:
-		mute_button.draw_line(c + Vector2(6, -4), c + Vector2(13, 4), col, 2.0, true)
-		mute_button.draw_line(c + Vector2(13, -4), c + Vector2(6, 4), col, 2.0, true)
-	else:
-		mute_button.draw_arc(c + Vector2(3, 0), 5.0, -0.9, 0.9, 8, col, 1.6, true)
-		if music.volume > 0.5:
-			mute_button.draw_arc(c + Vector2(3, 0), 9.0, -0.9, 0.9, 10, col, 1.6, true)
+func _icon_button(parent: Control, kind: String, action: Callable, tooltip: String) -> Button:
+	var b := _button(parent, "", action, tooltip)
+	b.custom_minimum_size = Vector2(36, 30)
+	b.draw.connect(_draw_icon.bind(b, kind))
+	return b
+
+
+func _poly(b: Button, c: Vector2, points: Array, col: Color) -> void:
+	var pts := PackedVector2Array()
+	for p in points:
+		pts.append(c + p)
+	b.draw_colored_polygon(pts, col)
+
+
+func _line(b: Button, c: Vector2, points: Array, col: Color) -> void:
+	var pts := PackedVector2Array()
+	for p in points:
+		pts.append(c + p)
+	b.draw_polyline(pts, col, 2.0, true)
+
+
+func _arrow(b: Button, tip: Vector2, dir: Vector2, col: Color) -> void:
+	var n := dir.orthogonal()
+	b.draw_colored_polygon(PackedVector2Array([tip, tip - dir * 5.0 + n * 3.5, tip - dir * 5.0 - n * 3.5]), col)
+
+
+## Simple vector icons in the gold palette; inactive toggles are drawn dimmed.
+func _draw_icon(b: Button, kind: String) -> void:
+	var c := (b.size * 0.5).round()
+	var col := GOLD
+	var dim := Color(GOLD, 0.35)
+	match kind:
+		"play":
+			if music.playing and not music.stream_paused:
+				b.draw_rect(Rect2(c + Vector2(-6, -7), Vector2(4, 14)), col)
+				b.draw_rect(Rect2(c + Vector2(2, -7), Vector2(4, 14)), col)
+			else:
+				_poly(b, c, [Vector2(-5, -8), Vector2(8, 0), Vector2(-5, 8)], col)
+		"prev":
+			b.draw_rect(Rect2(c + Vector2(-8, -7), Vector2(2.5, 14)), col)
+			_poly(b, c, [Vector2(7, -7), Vector2(7, 7), Vector2(-5, 0)], col)
+		"next":
+			b.draw_rect(Rect2(c + Vector2(5.5, -7), Vector2(2.5, 14)), col)
+			_poly(b, c, [Vector2(-7, -7), Vector2(-7, 7), Vector2(5, 0)], col)
+		"rewind":
+			_poly(b, c, [Vector2(0, -6), Vector2(0, 6), Vector2(-8, 0)], col)
+			_poly(b, c, [Vector2(8, -6), Vector2(8, 6), Vector2(0, 0)], col)
+		"forward":
+			_poly(b, c, [Vector2(0, -6), Vector2(0, 6), Vector2(8, 0)], col)
+			_poly(b, c, [Vector2(-8, -6), Vector2(-8, 6), Vector2(0, 0)], col)
+		"restart":
+			var end := deg_to_rad(230.0)
+			b.draw_arc(c, 7.0, deg_to_rad(-40.0), end, 20, col, 2.0, true)
+			_arrow(b, c + Vector2.from_angle(end) * 7.0 + Vector2(1, -2), Vector2(-sin(end), cos(end)), col)
+		"shuffle":
+			var sc := col if music.shuffle else dim
+			_line(b, c, [Vector2(-9, -5), Vector2(-3, -5), Vector2(3, 5), Vector2(6, 5)], sc)
+			_line(b, c, [Vector2(-9, 5), Vector2(-3, 5), Vector2(3, -5), Vector2(6, -5)], sc)
+			_arrow(b, c + Vector2(10, 5), Vector2.RIGHT, sc)
+			_arrow(b, c + Vector2(10, -5), Vector2.RIGHT, sc)
+		"repeat":
+			var rc := dim if music.repeat == music.Repeat.OFF else col
+			_line(b, c, [Vector2(-8, 3), Vector2(-8, -5), Vector2(5, -5)], rc)
+			_arrow(b, c + Vector2(9, -5), Vector2.RIGHT, rc)
+			_line(b, c, [Vector2(8, -3), Vector2(8, 5), Vector2(-5, 5)], rc)
+			_arrow(b, c + Vector2(-9, 5), Vector2.LEFT, rc)
+			if music.repeat == music.Repeat.ONE:
+				b.draw_string(b.get_theme_font("font"), c + Vector2(-3, 4), "1", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, rc)
+		"speaker":
+			var s := c + Vector2(-4, 0)
+			_poly(b, s, [Vector2(-6, -3), Vector2(-2, -3), Vector2(3, -8), Vector2(3, 8), Vector2(-2, 3), Vector2(-6, 3)], col)
+			if music.muted:
+				b.draw_line(s + Vector2(6, -4), s + Vector2(13, 4), col, 2.0, true)
+				b.draw_line(s + Vector2(13, -4), s + Vector2(6, 4), col, 2.0, true)
+			else:
+				b.draw_arc(s + Vector2(3, 0), 5.0, -0.9, 0.9, 8, col, 1.6, true)
+				if music.volume > 0.5:
+					b.draw_arc(s + Vector2(3, 0), 9.0, -0.9, 0.9, 10, col, 1.6, true)
+		"fullscreen":
+			for sx in [-1, 1]:
+				for sy in [-1, 1]:
+					_line(b, c, [Vector2(sx * 8, sy * 3), Vector2(sx * 8, sy * 8), Vector2(sx * 3, sy * 8)], col)
+		"lock":
+			var locked := lock_button.button_pressed
+			var lc := col if locked else dim
+			b.draw_rect(Rect2(c + Vector2(-6, -1), Vector2(12, 9)), lc)
+			b.draw_arc(c + Vector2(0 if locked else 4, -1), 4.5, PI, TAU if locked else PI * 1.75, 12, lc, 2.0, true)
+		"quit":
+			var qc := Color(1.0, 0.62, 0.45)
+			b.draw_arc(c + Vector2(0, 1), 7.0, deg_to_rad(-55.0), deg_to_rad(235.0), 20, qc, 2.0, true)
+			b.draw_line(c + Vector2(0, -8), c + Vector2(0, 0), qc, 2.0, true)
 
 
 func _on_volume(v: float) -> void:
@@ -374,7 +450,7 @@ func _on_seek_ended(_changed: bool) -> void:
 
 
 func _on_lock() -> void:
-	lock_button.text = "Locked" if lock_button.button_pressed else "Lock"
+	lock_button.queue_redraw()
 
 
 func _button(parent: Control, text: String, action: Callable, tooltip := "") -> Button:
@@ -426,7 +502,10 @@ func _time(seconds: float) -> String:
 
 func _make_theme() -> Theme:
 	var th := Theme.new()
-	th.default_font_size = 14
+	th.default_font_size = 13
+	th.default_font = LIGHT_FONT
+	for type in ["Button", "TabContainer"]:
+		th.set_font("font", type, BOLD_FONT)
 
 	var bg := StyleBoxFlat.new()
 	bg.bg_color = Color(0.03, 0.05, 0.04, 0.66)
