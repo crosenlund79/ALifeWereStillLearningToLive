@@ -26,6 +26,12 @@ var eq_toggle := CheckButton.new()
 var backgrounds: Array[String] = []
 var play_button: Button
 var lock_button: Button
+var shuffle_button: Button
+var repeat_button: Button
+var mute_button: Button
+var volume_slider: HSlider
+var syncing := false
+var hidden_by_user := false
 var idle := 0.0
 var seeking := false
 
@@ -74,14 +80,29 @@ func _ready() -> void:
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	buttons.add_theme_constant_override("separation", 6)
 	box.add_child(buttons)
-	_button(buttons, "Prev", music.previous_track)
-	_button(buttons, "-5s", music.seek_by.bind(-music.SEEK_STEP))
-	play_button = _button(buttons, "Pause", music.toggle_pause)
-	_button(buttons, "Restart", music.restart)
-	_button(buttons, "+5s", music.seek_by.bind(music.SEEK_STEP))
-	_button(buttons, "Next", music.next_track)
-	_button(buttons, "Fullscreen", music.toggle_fullscreen)
-	lock_button = _button(buttons, "Lock", _on_lock)
+	_button(buttons, "Prev", music.previous_track, "Previous track (P)")
+	_button(buttons, "-5s", music.seek_by.bind(-music.SEEK_STEP), "Rewind 5 seconds (Left)")
+	play_button = _button(buttons, "Pause", music.toggle_pause, "Play / Pause (Space)")
+	_button(buttons, "Restart", music.restart, "Restart song after 2 seconds (Enter)")
+	_button(buttons, "+5s", music.seek_by.bind(music.SEEK_STEP), "Forward 5 seconds (Right)")
+	_button(buttons, "Next", music.next_track, "Next track (N)")
+
+	var options := HBoxContainer.new()
+	options.alignment = BoxContainer.ALIGNMENT_CENTER
+	options.add_theme_constant_override("separation", 6)
+	box.add_child(options)
+	shuffle_button = _button(options, "Shuffle", music.toggle_shuffle, "Shuffle (S)")
+	shuffle_button.toggle_mode = true
+	repeat_button = _button(options, "", music.cycle_repeat, "Repeat: Off / All / One (R)")
+	repeat_button.custom_minimum_size.x = 104
+	mute_button = _button(options, "", music.toggle_mute, "Mute / Unmute (M)")
+	mute_button.custom_minimum_size.x = 64
+	volume_slider = _slider(music.volume * 100.0, 100.0, _on_volume)
+	volume_slider.custom_minimum_size.x = 110
+	volume_slider.tooltip_text = "Volume (Up / Down)"
+	options.add_child(volume_slider)
+	_button(options, "Fullscreen", music.toggle_fullscreen, "Fullscreen (F)")
+	lock_button = _button(options, "Lock", _on_lock, "Keep the interface visible (Esc shows / hides it)")
 	lock_button.toggle_mode = true
 
 	var tabs := TabContainer.new()
@@ -184,7 +205,15 @@ func _ready() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	# Esc hides the interface immediately (even when locked); any other activity shows it again.
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE and overlay.visible:
+		hidden_by_user = true
+		overlay.modulate.a = 0.0
+		overlay.visible = false
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventMouse or (event is InputEventKey and event.pressed):
+		hidden_by_user = false
 		idle = 0.0
 		overlay.modulate.a = 1.0
 		overlay.visible = true
@@ -195,7 +224,7 @@ func _process(delta: float) -> void:
 	for p in popups:
 		if p.visible:
 			idle = 0.0
-	var target := 1.0 if lock_button.button_pressed or idle < IDLE_TIME else 0.0
+	var target := 1.0 if not hidden_by_user and (lock_button.button_pressed or idle < IDLE_TIME) else 0.0
 	overlay.modulate.a = move_toward(overlay.modulate.a, target, delta / FADE_TIME)
 	overlay.visible = overlay.modulate.a > 0.0
 
@@ -212,7 +241,13 @@ func _process(delta: float) -> void:
 	if not seeking:
 		seek_bar.value = music.get_playback_position()
 	time_label.text = "%s / %s" % [_time(seek_bar.value), _time(length)]
-	play_button.text = "Play" if music.stream_paused else "Pause"
+	play_button.text = "Pause" if music.playing and not music.stream_paused else "Play"
+	shuffle_button.set_pressed_no_signal(music.shuffle)
+	repeat_button.text = "Repeat: " + ["Off", "All", "One"][music.repeat]
+	mute_button.text = "Unmute" if music.muted else "Mute"
+	syncing = true
+	volume_slider.value = 0.0 if music.muted else music.volume * 100.0
+	syncing = false
 
 
 func _on_track_changed(index: int) -> void:
@@ -259,6 +294,11 @@ func _on_color_reset() -> void:
 	visualizer.set_base_color(visualizer.GOLD, false)
 
 
+func _on_volume(v: float) -> void:
+	if not syncing:
+		music.set_volume(v / 100.0)
+
+
 func _on_sensitivity(v: float) -> void:
 	visualizer.sensitivity = v / 100.0
 	music.set_app_setting("sensitivity", v)
@@ -291,9 +331,10 @@ func _on_lock() -> void:
 	lock_button.text = "Locked" if lock_button.button_pressed else "Lock"
 
 
-func _button(parent: Control, text: String, action: Callable) -> Button:
+func _button(parent: Control, text: String, action: Callable, tooltip := "") -> Button:
 	var b := Button.new()
 	b.text = text
+	b.tooltip_text = tooltip
 	b.focus_mode = FOCUS_NONE  # Keep Space/Enter/arrows for the keyboard controls.
 	b.pressed.connect(action)
 	parent.add_child(b)

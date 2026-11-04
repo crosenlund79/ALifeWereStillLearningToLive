@@ -1,2 +1,4 @@
 .godot/
 settings.cfg
+build/
+dist/
