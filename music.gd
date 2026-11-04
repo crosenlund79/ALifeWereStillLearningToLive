@@ -94,6 +94,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.echo and event.keycode not in [KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN]:
 		return
+	if event.keycode == KEY_Q and event.ctrl_pressed:
+		quit_app()
+		return
 	match event.keycode:
 		KEY_SPACE: toggle_pause()
 		KEY_ENTER, KEY_KP_ENTER: restart()
@@ -148,6 +151,15 @@ func _process(_delta: float) -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and media_pid >= 0:
 		OS.kill(media_pid)
+
+
+## Quit button / Ctrl+Q: stop playback, save settings and close the media-key helper.
+func quit_app() -> void:
+	stop_playback()
+	settings.save(config_path)
+	if media_pid >= 0:
+		OS.kill(media_pid)
+	get_tree().quit()
 
 
 func _start_media_helper() -> void:

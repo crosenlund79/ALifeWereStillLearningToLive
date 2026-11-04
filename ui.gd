@@ -30,6 +30,9 @@ var shuffle_button: Button
 var repeat_button: Button
 var mute_button: Button
 var volume_slider: HSlider
+var volume_label := Label.new()
+var frame_toggle := CheckButton.new()
+var frame_hidden := false
 var syncing := false
 var hidden_by_user := false
 var idle := 0.0
@@ -96,14 +99,19 @@ func _ready() -> void:
 	repeat_button = _button(options, "", music.cycle_repeat, "Repeat: Off / All / One (R)")
 	repeat_button.custom_minimum_size.x = 104
 	mute_button = _button(options, "", music.toggle_mute, "Mute / Unmute (M)")
-	mute_button.custom_minimum_size.x = 64
+	mute_button.custom_minimum_size = Vector2(34, 26)
+	mute_button.draw.connect(_draw_speaker)
 	volume_slider = _slider(music.volume * 100.0, 100.0, _on_volume)
 	volume_slider.custom_minimum_size.x = 110
-	volume_slider.tooltip_text = "Volume (Up / Down)"
+	volume_slider.tooltip_text = "Volume (Up / Down, 5% steps)"
 	options.add_child(volume_slider)
+	volume_label.custom_minimum_size.x = 44
+	options.add_child(volume_label)
 	_button(options, "Fullscreen", music.toggle_fullscreen, "Fullscreen (F)")
 	lock_button = _button(options, "Lock", _on_lock, "Keep the interface visible (Esc shows / hides it)")
 	lock_button.toggle_mode = true
+	var quit_button := _button(options, "Quit", music.quit_app, "Quit TinserBox (Ctrl+Q)")
+	quit_button.add_theme_color_override("font_color", Color(1.0, 0.62, 0.45))
 
 	var tabs := TabContainer.new()
 	tabs.size_flags_vertical = SIZE_EXPAND_FILL
@@ -133,6 +141,10 @@ func _ready() -> void:
 	_row(vis, "Hue", _slider(50.0, 100.0, func(v: float): visualizer.hue_sensitivity = v / 100.0))
 	scroll_toggle.button_pressed = true
 	_row(vis, "Scrolling title", scroll_toggle)
+	frame_toggle.button_pressed = music.app_setting("hide_frame", false)
+	frame_toggle.tooltip_text = "Hide the window title bar and borders while the interface is hidden"
+	frame_toggle.toggled.connect(func(on: bool): music.set_app_setting("hide_frame", on))
+	_row(vis, "Hide window frame", frame_toggle)
 
 	# Equalizer
 	var eq_box := VBoxContainer.new()
@@ -227,6 +239,7 @@ func _process(delta: float) -> void:
 	var target := 1.0 if not hidden_by_user and (lock_button.button_pressed or idle < IDLE_TIME) else 0.0
 	overlay.modulate.a = move_toward(overlay.modulate.a, target, delta / FADE_TIME)
 	overlay.visible = overlay.modulate.a > 0.0
+	_update_frame()
 
 	scroll_title.visible = scroll_toggle.button_pressed and not overlay.visible
 	if scroll_title.visible:
@@ -244,7 +257,8 @@ func _process(delta: float) -> void:
 	play_button.text = "Pause" if music.playing and not music.stream_paused else "Play"
 	shuffle_button.set_pressed_no_signal(music.shuffle)
 	repeat_button.text = "Repeat: " + ["Off", "All", "One"][music.repeat]
-	mute_button.text = "Unmute" if music.muted else "Mute"
+	mute_button.queue_redraw()
+	volume_label.text = "Muted" if music.muted else "%d%%" % roundi(music.volume * 100.0)
 	syncing = true
 	volume_slider.value = 0.0 if music.muted else music.volume * 100.0
 	syncing = false
@@ -292,6 +306,38 @@ func _on_color_reset() -> void:
 	music.set_song_setting("color", null)
 	color_button.color = visualizer.GOLD
 	visualizer.set_base_color(visualizer.GOLD, false)
+
+
+## Hides the native title bar/borders while the overlay is hidden (optional). The client
+## area's position and size are restored after each switch so content never moves.
+func _update_frame() -> void:
+	var fullscreen := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+	var want_hidden := frame_toggle.button_pressed and not overlay.visible and not fullscreen
+	if want_hidden == frame_hidden:
+		return
+	frame_hidden = want_hidden
+	var window := get_window()
+	var pos := window.position
+	var window_size := window.size
+	window.borderless = want_hidden
+	window.size = window_size
+	window.position = pos
+
+
+## Speaker icon for the mute button: cone plus sound waves, or a cross when muted.
+func _draw_speaker() -> void:
+	var c := mute_button.size * 0.5 + Vector2(-5, 0)
+	var col := Color(GOLD, 0.95)
+	mute_button.draw_colored_polygon(PackedVector2Array([
+		c + Vector2(-6, -3), c + Vector2(-2, -3), c + Vector2(3, -8),
+		c + Vector2(3, 8), c + Vector2(-2, 3), c + Vector2(-6, 3)]), col)
+	if music.muted:
+		mute_button.draw_line(c + Vector2(6, -4), c + Vector2(13, 4), col, 2.0, true)
+		mute_button.draw_line(c + Vector2(13, -4), c + Vector2(6, 4), col, 2.0, true)
+	else:
+		mute_button.draw_arc(c + Vector2(3, 0), 5.0, -0.9, 0.9, 8, col, 1.6, true)
+		if music.volume > 0.5:
+			mute_button.draw_arc(c + Vector2(3, 0), 9.0, -0.9, 0.9, 10, col, 1.6, true)
 
 
 func _on_volume(v: float) -> void:

@@ -17,7 +17,7 @@ song filename (`background`, `color`) plus `[_app]` for EQ, sensitivity, volume,
 ## Shortcuts
 
 Space play/pause · Enter restart after 2 s · Left/Right seek 5 s · Up/Down volume · M mute ·
-N/P next/previous · S shuffle · R repeat (off/all/one) · F fullscreen · Esc show/hide interface.
+N/P next/previous · S shuffle · R repeat (off/all/one) · F fullscreen · Esc show/hide interface · Ctrl+Q quit.
 Hardware media keys (Play/Pause, Next, Previous, Stop) go through Windows' media controls
 via `TinserBoxMedia.exe` (`tools/media_keys/`), so they also work in the background.
 

@@ -39,6 +39,11 @@ KEYBOARD SHORTCUTS (when TinserBox is focused)
   R            Repeat: Off / All / One
   F            Fullscreen
   Esc          Show / hide the interface
+  Ctrl+Q       Quit (also the Quit button)
+
+The speaker icon mutes/unmutes. "Hide window frame" (Visualizer tab) hides the
+Windows title bar and borders while the interface is hidden; move the mouse or
+press a key to bring both back.
 
 MEDIA KEYS
 ----------
