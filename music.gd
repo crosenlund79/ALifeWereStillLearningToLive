@@ -30,6 +30,8 @@ var repeat := Repeat.ALL
 var volume := 1.0
 var muted := false
 var restart_timer := Timer.new()
+var gap_timer := Timer.new()  # Pause between songs after a natural finish.
+var song_delay := 0  # Seconds; 0 = start the next song immediately.
 var eq := AudioEffectEQ21.new()
 var eq_index := 0
 
@@ -77,6 +79,10 @@ func _ready() -> void:
 	restart_timer.one_shot = true
 	restart_timer.timeout.connect(func(): play(0.0))
 	add_child(restart_timer)
+	song_delay = app_setting("song_delay", 0)
+	gap_timer.one_shot = true
+	gap_timer.timeout.connect(_advance_after_finish)
+	add_child(gap_timer)
 	finished.connect(_on_finished)
 
 	for file in DirAccess.get_files_at(music_dir):
@@ -193,6 +199,7 @@ func _build_order(first: int) -> void:
 
 func _play(index: int) -> void:
 	restart_timer.stop()
+	gap_timer.stop()  # Manual Next/Previous/selection plays immediately.
 	current = index
 	stream = _load_stream(tracks[current])
 	play()
@@ -230,6 +237,18 @@ func _step(direction: int, wrap: bool) -> void:
 
 
 func _on_finished() -> void:
+	if song_delay > 0:
+		gap_timer.start(song_delay)
+	else:
+		_advance_after_finish()
+
+
+func set_song_delay(seconds: int) -> void:
+	song_delay = seconds
+	set_app_setting("song_delay", seconds)
+
+
+func _advance_after_finish() -> void:
 	match repeat:
 		Repeat.ONE: _play(current)
 		Repeat.ALL: _step(1, true)
@@ -245,6 +264,9 @@ func previous_track() -> void:
 
 
 func toggle_pause() -> void:
+	if not gap_timer.is_stopped():
+		gap_timer.stop()  # Pausing during the gap cancels the automatic next song.
+		return
 	if not restart_timer.is_stopped():
 		return
 	if not playing and not stream_paused:
@@ -256,11 +278,13 @@ func toggle_pause() -> void:
 
 func stop_playback() -> void:
 	restart_timer.stop()
+	gap_timer.stop()
 	stop()
 	stream_paused = false
 
 
 func restart() -> void:
+	gap_timer.stop()
 	stop()
 	stream_paused = false
 	restart_timer.start(RESTART_DELAY)
@@ -274,6 +298,7 @@ func seek_to(pos_seconds: float) -> void:
 	# Seeking waits while a restart is pending.
 	if stream == null or not restart_timer.is_stopped():
 		return
+	gap_timer.stop()
 	var was_paused := stream_paused
 	play(clampf(pos_seconds, 0.0, stream.get_length()))
 	stream_paused = was_paused

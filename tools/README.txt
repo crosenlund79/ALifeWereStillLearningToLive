@@ -39,6 +39,7 @@ KEYBOARD SHORTCUTS (when TinserBox is focused)
   R            Repeat: Off / All / One
   F            Fullscreen
   Esc          Show / hide the interface
+  H            Hide the interface until H is pressed again (remembered)
   Ctrl+Q       Quit (also the Quit button)
 
 The speaker icon mutes/unmutes. "Hide window frame" (Visualizer tab) hides the

@@ -37,6 +37,7 @@ var frame_toggle := CheckButton.new()
 var frame_hidden := false
 var syncing := false
 var hidden_by_user := false
+var hide_mode := false  # H: interface stays hidden until H is pressed again.
 var idle := 0.0
 var seeking := false
 
@@ -109,6 +110,7 @@ func _ready() -> void:
 	_icon_button(buttons, "fullscreen", music.toggle_fullscreen, "Fullscreen (F)")
 	lock_button = _icon_button(buttons, "lock", _on_lock, "Keep the interface visible (Esc shows / hides it)")
 	lock_button.toggle_mode = true
+	_icon_button(buttons, "hide", toggle_hide_mode, "Hide interface (H) - only H shows it again")
 	_icon_button(buttons, "quit", music.quit_app, "Quit TinserBox (Ctrl+Q)")
 
 	var tabs := TabContainer.new()
@@ -119,12 +121,33 @@ func _ready() -> void:
 	box.move_child(tabs, 0)  # Navigation tabs sit at the top of the overlay.
 
 	# Playlist
-	playlist.name = "Playlist"
+	var playlist_tab := VBoxContainer.new()
+	playlist_tab.name = "Playlist"
+	playlist_tab.add_theme_constant_override("separation", 8)
+	tabs.add_child(playlist_tab)
 	playlist.focus_mode = FOCUS_NONE
+	playlist.size_flags_vertical = SIZE_EXPAND_FILL
 	for track in music.tracks:
 		playlist.add_item(track.get_file().get_basename())
 	playlist.item_clicked.connect(_on_playlist_clicked)
-	tabs.add_child(playlist)
+	playlist_tab.add_child(playlist)
+	var delay_row := HBoxContainer.new()
+	delay_row.add_theme_constant_override("separation", 12)
+	playlist_tab.add_child(delay_row)
+	var delay_title := Label.new()
+	delay_title.text = "Between songs delay"
+	delay_row.add_child(delay_title)
+	var delay_value := Label.new()
+	delay_value.custom_minimum_size.x = 44
+	var delay_slider := _slider(music.song_delay, 30.0, func(v: float):
+		music.set_song_delay(int(v))
+		delay_value.text = "%d s" % int(v))
+	delay_slider.step = 1.0
+	delay_slider.size_flags_horizontal = SIZE_EXPAND_FILL
+	delay_slider.tooltip_text = "Pause after a song finishes before the next one starts (0-30 s)"
+	delay_row.add_child(delay_slider)
+	delay_value.text = "%d s" % music.song_delay
+	delay_row.add_child(delay_value)
 
 	# Visualizer
 	var vis := _grid(tabs, "Visualizer")
@@ -215,9 +238,27 @@ func _ready() -> void:
 	popups = [mode_select.get_popup(), background_select.get_popup(), color_button.get_popup()]
 	music.track_changed.connect(_on_track_changed)
 	_on_track_changed(music.current)
+	if music.app_setting("hide_mode", false):
+		toggle_hide_mode()
+
+
+func toggle_hide_mode() -> void:
+	hide_mode = not hide_mode
+	music.set_app_setting("hide_mode", hide_mode)
+	idle = 0.0
+	hidden_by_user = false
+	overlay.modulate.a = 0.0 if hide_mode else 1.0
+	overlay.visible = not hide_mode
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H and not event.ctrl_pressed:
+		toggle_hide_mode()
+		get_viewport().set_input_as_handled()
+		return
+	# In hide mode no activity reveals the interface; playback keys still reach the player.
+	if hide_mode:
+		return
 	# Esc hides the interface immediately (even when locked); any other activity shows it again.
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE and overlay.visible:
 		hidden_by_user = true
@@ -237,12 +278,12 @@ func _process(delta: float) -> void:
 	for p in popups:
 		if p.visible:
 			idle = 0.0
-	var target := 1.0 if not hidden_by_user and (lock_button.button_pressed or idle < IDLE_TIME) else 0.0
+	var target := 1.0 if not hide_mode and not hidden_by_user and (lock_button.button_pressed or idle < IDLE_TIME) else 0.0
 	overlay.modulate.a = move_toward(overlay.modulate.a, target, delta / FADE_TIME)
 	overlay.visible = overlay.modulate.a > 0.0
 	_update_frame()
 
-	scroll_title.visible = scroll_toggle.button_pressed and not overlay.visible
+	scroll_title.visible = scroll_toggle.button_pressed and not overlay.visible and not hide_mode
 	if scroll_title.visible:
 		scroll_title.position.x -= SCROLL_SPEED * delta
 		if scroll_title.position.x < -scroll_title.size.x:
@@ -410,6 +451,13 @@ func _draw_icon(b: Button, kind: String) -> void:
 			var lc := col if locked else dim
 			b.draw_rect(Rect2(c + Vector2(-6, -1), Vector2(12, 9)), lc)
 			b.draw_arc(c + Vector2(0 if locked else 4, -1), 4.5, PI, TAU if locked else PI * 1.75, 12, lc, 2.0, true)
+		"hide":
+			# Eye with a slash, plus the H shortcut letter.
+			b.draw_arc(c + Vector2(-2, 5), 8.0, deg_to_rad(-150.0), deg_to_rad(-30.0), 12, col, 1.8, true)
+			b.draw_arc(c + Vector2(-2, -5), 8.0, deg_to_rad(30.0), deg_to_rad(150.0), 12, col, 1.8, true)
+			b.draw_circle(c + Vector2(-2, 0), 2.2, col)
+			b.draw_line(c + Vector2(-9, 6), c + Vector2(5, -6), col, 1.8, true)
+			b.draw_string(BOLD_FONT, c + Vector2(8, 10), "H", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, col)
 		"quit":
 			var qc := Color(1.0, 0.62, 0.45)
 			b.draw_arc(c + Vector2(0, 1), 7.0, deg_to_rad(-55.0), deg_to_rad(235.0), 20, qc, 2.0, true)
