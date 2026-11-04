@@ -14,6 +14,8 @@ TEMPLATES="$HOME/.local/share/godot/export_templates/4.3.stable"
 TPZ="https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz"
 
 rm -rf "$ROOT/build/windows" && mkdir -p "$APP" "$DIST"
+# Remove previous artifacts so a failed build never leaves an older installer looking current.
+rm -f "$DIST/TinserBox_Setup_Win64.exe" "$DIST/TinserBox_Portable_Win64.zip"
 touch "$ROOT/build/.gdignore" "$DIST/.gdignore"
 
 # 1. Windows export template (only that file is fetched from the ~1 GB template archive).
@@ -52,3 +54,4 @@ LC_ALL=C.UTF-8 makensis -V2 -DVERSION="$VERSION" -DSRC="$APP" -DICON="$ROOT/icon
   -DOUT="$DIST/TinserBox_Setup_Win64.exe" "$ROOT/tools/installer.nsi"
 
 ls -la "$DIST"
+echo "Latest installer: $DIST/TinserBox_Setup_Win64.exe ($(date -r "$DIST/TinserBox_Setup_Win64.exe" '+%Y-%m-%d %H:%M:%S'))"
