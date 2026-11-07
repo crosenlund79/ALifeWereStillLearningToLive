@@ -9,6 +9,7 @@ extends AudioStreamPlayer
 signal track_changed(index: int)
 signal playlist_changed
 signal notice(text: String)
+signal source_changed
 
 enum Repeat { OFF, ALL, ONE }
 
@@ -64,6 +65,16 @@ var media_udp := PacketPeerUDP.new()
 var media_pid := -1
 var media_helper := false
 var media_state := ""
+var helper_connected := false  # Helper running (system audio possible), even without media keys.
+
+# System audio: other apps' sound captured by the helper (WASAPI loopback).
+var source := "player"  # "player" or "system"
+var capture_player := AudioStreamPlayer.new()
+var capture_gen := AudioStreamGenerator.new()
+var capture_playback: AudioStreamGeneratorPlayback
+var _pcm := PackedVector2Array()
+var _player_path := ""  # The local track to return to when leaving system audio.
+var _want_system := false
 
 
 ## Editor: the project folder. Portable build: next to the executable. Installed build
@@ -120,10 +131,20 @@ func _ready() -> void:
 		library[f] = true
 	_rebuild("")
 
+	# System audio was the last source: wait for the helper instead of starting a song.
+	_want_system = app_setting("audio_source", "player") == "system" and OS.get_name() == "Windows" \
+		and FileAccess.file_exists(exe_dir.path_join(MEDIA_HELPER))
+	capture_gen.buffer_length = 0.2
+	capture_player.stream = capture_gen
+	add_child(capture_player)
+
 	# Resume where the user left off, else start fresh (random first track in shuffle).
 	var last: String = settings.get_value(PLAYLIST, "last_track", "")
 	var last_pos: float = settings.get_value(PLAYLIST, "last_position", 0.0)
-	if last in tracks:
+	if _want_system:
+		current_path = last if last in tracks else ""
+		current = maxi(tracks.find(current_path), 0)
+	elif last in tracks:
 		play_track(tracks.find(last))
 		if last_pos > 3.0 and stream and last_pos < stream.get_length() - 5.0:
 			seek_to(last_pos)
@@ -144,6 +165,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		quit_app()
 		return
 	if event.ctrl_pressed or event.alt_pressed:
+		return
+	if source == "system":
+		# Visualizing another app: only window keys apply; its own app controls playback.
+		if event.keycode == KEY_F:
+			toggle_fullscreen()
 		return
 	match event.keycode:
 		KEY_SPACE: toggle_pause()
@@ -311,6 +337,8 @@ func clear_queue() -> void:
 
 
 func display_name(path: String) -> String:
+	if path.begins_with("system://"):
+		return path.substr(9)
 	return path.get_file().get_basename()
 
 
@@ -368,6 +396,8 @@ func _play(index: int) -> void:
 func play_track(index: int) -> void:
 	if tracks.is_empty() or index < 0 or index >= tracks.size():
 		return
+	if source == "system":
+		set_source("player")  # Choosing a local song returns to the TinserBox player.
 	if shuffle:
 		_build_order(index)
 	else:
@@ -709,13 +739,30 @@ func _poll_media_helper() -> void:
 	if media_pid < 0:
 		return
 	while media_udp.get_available_packet_count() > 0:
-		var msg := media_udp.get_packet().get_string_from_utf8()
+		var packet := media_udp.get_packet()
+		if packet.size() > 1 and packet[0] == 1:
+			_push_pcm(packet)
+			continue
+		var msg := packet.get_string_from_utf8()
+		if msg.begins_with("np "):
+			var parts := msg.substr(3).split("\t")
+			_set_system_track(parts[0], parts[1] if parts.size() > 1 else "")
+			continue
+		if msg.begins_with("fmt "):
+			capture_gen.mix_rate = float(msg.substr(4))
+			if source == "system":
+				_start_capture_player()
+			continue
 		match msg:
-			"hello":
+			"hello", "hello nokeys":
 				media_udp.set_dest_address("127.0.0.1", media_udp.get_packet_port())
-				media_helper = true
+				helper_connected = true
+				media_helper = msg == "hello"
 				media_state = ""
 				_send_media_title()
+				if _want_system:
+					_want_system = false
+					set_source("system")
 			"play":
 				if stream_paused or not playing:
 					toggle_pause()
@@ -726,8 +773,10 @@ func _poll_media_helper() -> void:
 			"next": next_track()
 			"previous": previous_track()
 			_:
-				push_warning("Media keys unavailable: " + msg)
-	if media_helper:
+				push_warning("TinserBox helper: " + msg)
+				if msg.begins_with("error capture"):
+					notice.emit("System audio capture is unavailable on this device")
+	if media_helper and source == "player":
 		var state := "paused" if stream_paused else ("playing" if playing or not restart_timer.is_stopped() else "stopped")
 		if state != media_state:
 			media_state = state
@@ -742,8 +791,80 @@ func _start_media_helper() -> void:
 	media_pid = OS.create_process(helper, [str(media_udp.get_local_port()), str(OS.get_process_id())])
 
 
+# --- System audio -------------------------------------------------------------------
+
+## Switch between TinserBox's own player and visualizing system audio (Windows only).
+func set_source(new_source: String) -> bool:
+	if new_source == source:
+		return true
+	if new_source == "system":
+		if not helper_connected:
+			notice.emit("System audio needs the Windows version (TinserBoxMedia.exe)")
+			return false
+		_player_path = current_path
+		stop_playback()
+		source = "system"
+		audio.capture_bus()
+		_start_capture_player()
+		_helper_send("smtc off")
+		_helper_send("capture on")
+		_set_system_track("", "")
+		notice.emit("Visualizing system audio")
+	else:
+		source = "player"
+		if helper_connected:
+			_helper_send("capture off")
+			_helper_send("smtc on")
+		capture_player.stop()
+		media_state = ""
+		current_path = _player_path if _player_path in tracks else (tracks[0] if not tracks.is_empty() else "")
+		current = maxi(tracks.find(current_path), 0)
+		track_changed.emit(current)
+		notice.emit("TinserBox player")
+	audio.set_source(source)
+	set_app_setting("audio_source", source)
+	source_changed.emit()
+	return true
+
+
+func _helper_send(text: String) -> void:
+	if media_pid >= 0 and helper_connected:
+		media_udp.put_packet(text.to_utf8_buffer())
+
+
+func _start_capture_player() -> void:
+	capture_player.bus = audio.capture_bus()
+	capture_player.stop()
+	capture_player.play()
+	capture_playback = capture_player.get_stream_playback()
+
+
+## Captured PCM (int16 stereo after a 1-byte header) into the generator; when the buffer
+## is full the packet is dropped, which keeps the delay to the music short.
+func _push_pcm(packet: PackedByteArray) -> void:
+	if source != "system" or capture_playback == null:
+		return
+	var frames := (packet.size() - 1) / 4
+	if capture_playback.get_frames_available() < frames:
+		return
+	_pcm.resize(frames)
+	for i in frames:
+		_pcm[i] = Vector2(packet.decode_s16(1 + i * 4) / 32768.0, packet.decode_s16(3 + i * 4) / 32768.0)
+	capture_playback.push_buffer(_pcm)
+
+
+## The song another app is playing becomes TinserBox's "current song": pop-up, per-song
+## looks (section "Artist - Title" in settings.cfg) and automatic atmosphere all apply.
+func _set_system_track(title: String, artist: String) -> void:
+	var label := title if artist == "" else "%s - %s" % [artist, title]
+	label = label.replace("/", "-").replace("\\", "-").strip_edges()
+	current_path = "system://" + (label if label != "" else "System audio")
+	_meta_cache[current_path] = {"title": title if title != "" else "System audio", "artist": artist}
+	track_changed.emit(-1)
+
+
 func _send_media_title() -> void:
-	if media_helper and current_path != "":
+	if media_helper and current_path != "" and source == "player":
 		var info := track_info(current_path)
 		var text: String = info.title if info.artist == "" else "%s - %s" % [info.artist, info.title]
 		media_udp.put_packet(("title " + text).to_utf8_buffer())

@@ -40,6 +40,10 @@ var adaptive := true
 var eq := AudioEffectEQ21.new()
 var analyzer := AudioEffectSpectrumAnalyzer.new()
 var available := false  # Analyzer instance present and returning data.
+## "player": TinserBox's own playback (Master bus). "system": audio captured from other
+## apps, played on the silent "Capture" bus, which has its own analyzer.
+var source := "player"
+var capture_analyzer: AudioEffectSpectrumAnalyzer
 
 # Outputs (all 0..1 unless noted).
 var levels := PackedFloat32Array()
@@ -131,6 +135,27 @@ func _ready() -> void:
 	reset_song_stats()
 
 
+## The silent bus for captured system audio: analyzed, never heard (-80 dB after effects).
+func capture_bus() -> String:
+	if AudioServer.get_bus_index("Capture") < 0:
+		AudioServer.add_bus()
+		var idx := AudioServer.bus_count - 1
+		AudioServer.set_bus_name(idx, "Capture")
+		AudioServer.set_bus_send(idx, "Master")
+		AudioServer.set_bus_volume_db(idx, -80.0)
+		capture_analyzer = AudioEffectSpectrumAnalyzer.new()
+		capture_analyzer.buffer_length = 0.1
+		capture_analyzer.fft_size = AudioEffectSpectrumAnalyzer.FFT_SIZE_2048
+		AudioServer.add_bus_effect(idx, capture_analyzer)
+	return "Capture"
+
+
+func set_source(new_source: String) -> void:
+	source = new_source
+	suppress_transients(0.6)
+	reset_song_stats()
+
+
 func _effect_index(effect: AudioEffect) -> int:
 	for i in AudioServer.get_bus_effect_count(0):
 		if AudioServer.get_bus_effect(0, i) == effect:
@@ -175,7 +200,11 @@ func _db_norm(magnitude: float, tilt: float) -> float:
 func _process(delta: float) -> void:
 	delta = minf(delta, 0.1)
 	_clock += delta
-	var inst := AudioServer.get_bus_effect_instance(0, _effect_index(analyzer)) as AudioEffectSpectrumAnalyzerInstance
+	var inst: AudioEffectSpectrumAnalyzerInstance
+	if source == "system":
+		inst = AudioServer.get_bus_effect_instance(AudioServer.get_bus_index("Capture"), 0) as AudioEffectSpectrumAnalyzerInstance
+	else:
+		inst = AudioServer.get_bus_effect_instance(0, _effect_index(analyzer)) as AudioEffectSpectrumAnalyzerInstance
 	available = inst != null
 	if inst == null:
 		return

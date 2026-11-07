@@ -55,6 +55,8 @@ var volume_slider: HSlider
 var volume_label := Label.new()
 var frame_toggle := CheckButton.new()
 var shot_dir_label := Label.new()
+var source_select := OptionButton.new()
+var player_only: Array[Control] = []  # Controls hidden while visualizing system audio.
 var frame_hidden := false
 var syncing := false
 var hidden_by_user := false
@@ -118,9 +120,11 @@ func _ready() -> void:
 	music.playlist_changed.connect(_refresh_playlist)
 	director.preset_changed.connect(func(_n): _sync_studio())
 	director.working_changed.connect(_sync_studio)
+	music.source_changed.connect(_update_source_ui)
 	_refresh_playlist()
 	_on_track_changed(music.current)
 	_sync_studio()
+	_update_source_ui()
 	if music.app_setting("hide_mode", false):
 		toggle_hide_mode()
 
@@ -353,6 +357,14 @@ func _build_song_tab(tabs: TabContainer) -> void:
 func _build_settings_tab(tabs: TabContainer) -> void:
 	var col := _scroll_tab(tabs, "Settings")
 	var g := _grid4(col)
+	_label(g, "Audio source")
+	source_select.add_item("TinserBox player")
+	source_select.add_item("System audio")
+	source_select.tooltip_text = "System audio: visualize whatever Windows is playing (Spotify, a browser, games). Control playback in that app; the visuals follow."
+	source_select.item_selected.connect(func(i: int):
+		if not music.set_source(["player", "system"][i]):
+			source_select.select(0))
+	_fill(g, source_select)
 	_label(g, "Quality")
 	var quality := OptionButton.new()
 	for q in ["Performance", "Balanced", "Quality"]:
@@ -457,6 +469,11 @@ func _build_transport(box: VBoxContainer) -> void:
 	lock_button.toggle_mode = true
 	_icon_button(buttons, "hide", toggle_hide_mode, "Hide interface (H) - only H shows it again")
 	_icon_button(buttons, "quit", music.quit_app, "Quit TinserBox (Ctrl+Q)")
+	# Playback buttons (0-7) and volume (9-11) only apply to TinserBox's own player.
+	for i in buttons.get_child_count():
+		if i < 8 or (i >= 9 and i <= 11):
+			player_only.append(buttons.get_child(i))
+	player_only.append(seek_row)
 
 
 # --- Overlay visibility ---------------------------------------------------------------
@@ -676,6 +693,13 @@ func _fill_preset_list(select: OptionButton, selected: String) -> void:
 	for i in names.size():
 		if names[i] == selected:
 			select.select(i)
+
+
+func _update_source_ui() -> void:
+	var player: bool = music.source == "player"
+	for c in player_only:
+		c.visible = player
+	source_select.select(0 if player else 1)
 
 
 func _on_save_as() -> void:

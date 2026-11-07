@@ -31,6 +31,13 @@ Drop MP3/OGG/WAV files into `music/` and PNG/JPG files into `backgrounds/`, then
 Missing folders are created automatically. `settings.cfg` is plain text: one section per
 song filename (`background`, `color`) plus `[_app]` for EQ, sensitivity, volume, shuffle and repeat.
 
+## Visualizing Spotify and other apps (Windows)
+
+Settings → Audio source → System audio. `TinserBoxMedia.exe` captures the default output
+device (WASAPI loopback) and streams it to TinserBox, which analyses it on a silent
+`Capture` bus. Title/artist come from Windows' media sessions, so per-song looks work for
+those songs (`settings.cfg` section `Artist - Title`).
+
 ## Shortcuts
 
 Space play/pause · Enter restart after 2 s · Left/Right seek 5 s · Up/Down volume · M mute ·

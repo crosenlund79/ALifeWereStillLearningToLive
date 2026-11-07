@@ -52,6 +52,17 @@ KEYBOARD (when TinserBox is focused)
   F12          Screenshot (key configurable: screenshot_key in settings.cfg)
   F3           Diagnostics            Ctrl+Q      Quit
 
+VISUALIZE SPOTIFY AND OTHER APPS (Windows)
+------------------------------------------
+Settings > Audio source > System audio: TinserBox stops its own player and
+visualizes whatever Windows is playing (Spotify, a browser, games), using
+loopback capture of your default output device: no drivers or admin rights.
+Control playback in that app (media keys go to it). The current song's title
+and artist come from Windows' media controls, so the song pop-up, per-song
+looks (section "Artist - Title" in settings.cfg) and automatic atmosphere
+work for those songs too. Visuals lag the sound by roughly 0.1 s. Click a
+song in the playlist (or choose TinserBox player) to return.
+
 MEDIA KEYS
 ----------
 Play/Pause, Next, Previous and Stop media keys go through the Windows media
