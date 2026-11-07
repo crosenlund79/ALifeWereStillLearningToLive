@@ -1,0 +1,51 @@
+# Builds TinserBox for Windows with tools/build_windows.sh and publishes the installer and
+# portable ZIP as a GitHub Release on every push (docs-only changes excluded).
+name: Build and release
+
+on:
+  push:
+    branches: [main, claude/confident-hawking-8ea9ua]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: ubuntu-24.04
+    env:
+      WINEDEBUG: -all
+      WINEDLLOVERRIDES: "mscoree,mshtml="
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mingw-w64 nsis zip wine64 python3-pil
+          sudo ln -sf "$(command -v wine64 || command -v wine)" /usr/local/bin/wine || true
+
+      - name: Download Godot 4.3
+        run: |
+          curl -sSLf -o godot.zip https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+          unzip -q godot.zip -d "$RUNNER_TEMP/godot"
+          rm godot.zip
+
+      - name: Build installer and portable ZIP
+        run: GODOT="$RUNNER_TEMP/godot/Godot_v4.3-stable_linux.x86_64" ./tools/build_windows.sh
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stamp="$(date -u +%Y-%m-%d-%H%M)"
+          tag="build-${stamp}-${GITHUB_SHA::7}"
+          gh release create "$tag" dist/TinserBox_Setup_Win64.exe dist/TinserBox_Portable_Win64.zip \
+            --target "$GITHUB_SHA" --latest \
+            --title "TinserBox build ${stamp} (${GITHUB_SHA::7})" \
+            --notes "Automatic build of ${GITHUB_SHA} from ${GITHUB_REF_NAME}. Download TinserBox_Setup_Win64.exe to install, or TinserBox_Portable_Win64.zip for the portable version."
