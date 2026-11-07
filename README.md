@@ -1,6 +1,21 @@
 # TinserBox
 
-A small Godot 4.3 music player with a golden audio visualizer.
+A Godot 4.3 music player and audio-reactive visualizer.
+
+Nine visualizers (Waveform, Square Grid, Seven Waves, Retro Spectrum, Glowing Orbs,
+The Aurora, Particle Universe, Resonance Engine, The Seven Spirits) can be layered with an
+atmosphere and a beat light over an animated background, saved as presets, and assigned per
+song or chosen automatically from how a song sounds.
+
+## Architecture
+
+- `audio_reactive.gd` - the single analysis service (EQ -> spectrum analyzer on the Master bus):
+  bands, loudness, peaks, silence, onset/kick/snap/beat detection, song personality.
+- `vis/visual_layer.gd` + renderers in `vis/` - custom-drawn visualizers reading that service.
+- `vis/background.gd` + `background.gdshader` - crossfading, Ken Burns, bloom, blur, procedural fallback.
+- `presets.gd` - built-in and user presets (`presets.json`, schema 1).
+- `director.gd` - applies presets, per-song looks and automatic atmosphere; screenshots, pop-ups, diagnostics.
+- `music.gd` - playlist, playback, settings, media keys. `ui.gd` - the overlay.
 
 ## Where music, backgrounds and settings live
 
@@ -10,6 +25,8 @@ A small Godot 4.3 music player with a golden audio visualizer.
 | Portable (`TinserBox_Portable_Win64.zip`) | next to `TinserBox.exe` |
 | Installed (`TinserBox_Setup_Win64.exe`) | `Documents\TinserBox\` (seeded with the bundled songs on first launch; kept on update/uninstall) |
 
+Alongside: `screenshots/` and `presets.json`.
+
 Drop MP3/OGG/WAV files into `music/` and PNG/JPG files into `backgrounds/`, then restart.
 Missing folders are created automatically. `settings.cfg` is plain text: one section per
 song filename (`background`, `color`) plus `[_app]` for EQ, sensitivity, volume, shuffle and repeat.
@@ -17,7 +34,9 @@ song filename (`background`, `color`) plus `[_app]` for EQ, sensitivity, volume,
 ## Shortcuts
 
 Space play/pause · Enter restart after 2 s · Left/Right seek 5 s · Up/Down volume · M mute ·
-N/P next/previous · S shuffle · R repeat (off/all/one) · F fullscreen · Esc show/hide interface · H hide interface until H again · Ctrl+Q quit.
+N/P next/previous · S shuffle · R repeat (off/all/one) · F fullscreen · Esc show/hide interface ·
+H hide interface until H again · 1-9 presets · [ ] previous/next preset · F12 screenshot ·
+F3 diagnostics · Ctrl+Q quit.
 Hardware media keys (Play/Pause, Next, Previous, Stop) go through Windows' media controls
 via `TinserBoxMedia.exe` (`tools/media_keys/`), so they also work in the background.
 

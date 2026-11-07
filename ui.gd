@@ -497,7 +497,9 @@ func _input(event: InputEvent) -> void:
 		overlay.visible = false
 		get_viewport().set_input_as_handled()
 		return
-	if event is InputEventMouse or (event is InputEventKey and event.pressed):
+	# Only real activity counts: synthetic zero-distance motion (tooltips, window events) does not.
+	var moved: bool = event is InputEventMouseMotion and event.relative.length() > 0.5
+	if moved or event is InputEventMouseButton or (event is InputEventKey and event.pressed):
 		hidden_by_user = false
 		idle = 0.0
 		overlay.modulate.a = 1.0

@@ -1,4 +1,6 @@
 .godot/
 settings.cfg
+presets.json
+screenshots/
 build/
 dist/

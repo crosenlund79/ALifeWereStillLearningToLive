@@ -334,7 +334,7 @@ func _update_cursor(delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventMouseMotion:
+	if event is InputEventMouseMotion and event.relative.length() > 0.5:
 		_cursor_idle = 0.0
 
 
