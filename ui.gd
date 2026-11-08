@@ -31,6 +31,10 @@ var context_menu := PopupMenu.new()
 var file_dialog := FileDialog.new()
 var visible_rows: Array[int] = []
 var context_row := -1
+var add_to_menu := PopupMenu.new()
+var playlist_select := OptionButton.new()
+var playlist_name_edit := LineEdit.new()
+var pending_play := -1  # Row clicked; plays on release unless it turns into a drag.
 var scroll_toggle := CheckButton.new()
 var background_select := OptionButton.new()
 var color_button := ColorPickerButton.new()
@@ -108,7 +112,12 @@ func _ready() -> void:
 	add_child(context_menu)
 	context_menu.add_item("Play now", 0)
 	context_menu.add_item("Queue next", 1)
-	context_menu.add_item("Remove from playlist", 2)
+	context_menu.add_item("Remove", 2)
+	add_to_menu.name = "AddTo"
+	add_to_menu.id_pressed.connect(func(id: int):
+		music.add_to_playlist(add_to_menu.get_item_text(id), [music.tracks[context_row]]))
+	context_menu.add_child(add_to_menu)
+	context_menu.add_submenu_item("Add to playlist", "AddTo", 3)
 	context_menu.id_pressed.connect(_on_context)
 	file_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	file_dialog.use_native_dialog = true
@@ -136,6 +145,24 @@ func _build_playlist_tab(tabs: TabContainer) -> void:
 	tab.name = "Playlist"
 	tab.add_theme_constant_override("separation", 8)
 	tabs.add_child(tab)
+	var lists := HBoxContainer.new()
+	lists.add_theme_constant_override("separation", 6)
+	tab.add_child(lists)
+	playlist_select.size_flags_horizontal = SIZE_EXPAND_FILL
+	playlist_select.focus_mode = FOCUS_NONE
+	playlist_select.tooltip_text = "Choose a playlist. The current song keeps playing; Next, Previous, Shuffle and Repeat use the chosen playlist."
+	playlist_select.item_selected.connect(func(i: int):
+		if not syncing:
+			music.set_active_playlist(playlist_select.get_item_text(i)))
+	popups.append(playlist_select.get_popup())
+	lists.add_child(playlist_select)
+	playlist_name_edit.placeholder_text = "Playlist name"
+	playlist_name_edit.custom_minimum_size.x = 170
+	lists.add_child(playlist_name_edit)
+	_button(lists, "New", _on_new_playlist, "Create a playlist with the name typed on the left")
+	_button(lists, "Rename", _on_rename_playlist, "Rename the selected playlist to the name typed on the left")
+	_button(lists, "Delete", _on_delete_playlist, "Delete the selected playlist (songs and files are kept)")
+
 	var tools := HBoxContainer.new()
 	tools.add_theme_constant_override("separation", 6)
 	tab.add_child(tools)
@@ -158,7 +185,8 @@ func _build_playlist_tab(tabs: TabContainer) -> void:
 	playlist.focus_mode = FOCUS_NONE
 	playlist.size_flags_vertical = SIZE_EXPAND_FILL
 	playlist.item_clicked.connect(_on_playlist_clicked)
-	playlist.tooltip_text = "Click to play. Right-click: play now, queue next, remove from playlist."
+	playlist.tooltip_text = "Click to play. Right-click: play now, queue next, add to a playlist, remove. Drag songs to reorder a playlist."
+	playlist.set_drag_forwarding(_playlist_drag, _playlist_can_drop, _playlist_drop)
 	tab.add_child(playlist)
 
 	var delay_row := HBoxContainer.new()
@@ -488,6 +516,11 @@ func toggle_hide_mode() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed and pending_play >= 0:
+		var row := pending_play
+		pending_play = -1
+		if not get_viewport().gui_is_dragging():
+			music.play_track(row)
 	var focus := get_viewport().gui_get_focus_owner()
 	if focus is LineEdit:
 		# Typing in a text field: only Esc (leave the field) or a click elsewhere.
@@ -579,6 +612,7 @@ func _update_frame() -> void:
 
 func _refresh_playlist() -> void:
 	var filter := search.text.strip_edges().to_lower()
+	var named: bool = music.active_playlist != music.ALL_MUSIC
 	playlist.clear()
 	visible_rows.clear()
 	for i in music.tracks.size():
@@ -587,8 +621,20 @@ func _refresh_playlist() -> void:
 		if filter != "" and not (filter in label_text.to_lower()):
 			continue
 		var q: int = music.queue.find(path)
-		playlist.add_item(("[%d] " % (q + 1) if q >= 0 else "") + label_text)
+		var missing := named and not FileAccess.file_exists(path)
+		var row := playlist.add_item(("[%d] " % (q + 1) if q >= 0 else "") + label_text + ("  (missing)" if missing else ""))
+		if missing:
+			playlist.set_item_custom_fg_color(row, Color(GOLD, 0.35))
 		visible_rows.append(i)
+	# Playlist selector and sort (sorting applies to All Music; playlists keep their order).
+	syncing = true
+	playlist_select.clear()
+	for n in music.playlist_names():
+		playlist_select.add_item(n)
+	playlist_select.select(maxi(music.playlist_names().find(music.active_playlist), 0))
+	syncing = false
+	sort_select.disabled = named
+	sort_select.tooltip_text = "Sort All Music" if not named else "Playlists keep their own order: drag songs to reorder"
 	_highlight_current()
 
 
@@ -605,11 +651,66 @@ func _on_playlist_clicked(row: int, at: Vector2, button: int) -> void:
 	if row >= visible_rows.size():
 		return
 	if button == MOUSE_BUTTON_LEFT:
-		music.play_track(visible_rows[row])
+		pending_play = visible_rows[row]  # Played on release (see _input) unless dragged.
 	elif button == MOUSE_BUTTON_RIGHT:
 		context_row = visible_rows[row]
+		add_to_menu.clear()
+		for n in music.playlists:
+			add_to_menu.add_item(n)
+		context_menu.set_item_disabled(context_menu.get_item_index(3), music.playlists.is_empty())
+		context_menu.set_item_text(context_menu.get_item_index(2), "Remove from this playlist" if music.active_playlist != music.ALL_MUSIC else "Remove from All Music")
 		context_menu.position = Vector2i(playlist.get_screen_position() + at)
 		context_menu.popup()
+
+
+# --- Named playlists ------------------------------------------------------------------
+
+func _on_new_playlist() -> void:
+	var n := playlist_name_edit.text.strip_edges()
+	if music.create_playlist(n):
+		playlist_name_edit.text = ""
+		director.show_toast("Created playlist " + n)
+	else:
+		director.show_toast("Type a new, unused playlist name first")
+
+
+func _on_rename_playlist() -> void:
+	if music.rename_playlist(music.active_playlist, playlist_name_edit.text):
+		playlist_name_edit.text = ""
+	else:
+		director.show_toast("Select one of your playlists and type a new, unused name")
+
+
+func _on_delete_playlist() -> void:
+	if music.active_playlist == music.ALL_MUSIC:
+		director.show_toast("All Music is the permanent library and cannot be deleted")
+		return
+	var n: String = music.active_playlist
+	music.delete_playlist(n)
+	director.show_toast("Deleted playlist %s (songs are kept)" % n)
+
+
+## Drag-and-drop reordering: only in a named playlist and while not filtering.
+func _playlist_drag(at: Vector2) -> Variant:
+	var row := playlist.get_item_at_position(at, true)
+	if row < 0 or music.active_playlist == music.ALL_MUSIC or search.text.strip_edges() != "":
+		return null
+	pending_play = -1
+	var preview := Label.new()
+	preview.text = playlist.get_item_text(row)
+	preview.add_theme_color_override("font_color", GOLD)
+	playlist.set_drag_preview(preview)
+	return {"tinserbox_row": visible_rows[row]}
+
+
+func _playlist_can_drop(_at: Vector2, data: Variant) -> bool:
+	return data is Dictionary and data.has("tinserbox_row")
+
+
+func _playlist_drop(at: Vector2, data: Variant) -> void:
+	var row := playlist.get_item_at_position(at, true)
+	var target: int = visible_rows[row] if row >= 0 else music.tracks.size() - 1
+	music.move_in_playlist(data.tinserbox_row, target)
 
 
 func _on_context(id: int) -> void:

@@ -21,6 +21,7 @@ const RESTART_DELAY := 2.0
 const APP := "_app"  # App-wide settings; song sections are keyed by filename.
 const PLAYLIST := "_playlist"  # Playlist state.
 const SORTS := ["name", "name_desc", "artist", "modified"]
+const ALL_MUSIC := "All Music"  # The permanent library; named playlists are stored separately.
 const EQ_BANDS := [60.0, 150.0, 400.0, 1000.0, 2400.0, 6000.0, 15000.0]
 const EQ21_HZ := [22, 32, 44, 63, 90, 125, 175, 250, 350, 500, 700, 1000, 1400, 2000, 2800, 4000, 5600, 8000, 11000, 16000, 22000]
 const MEDIA_HELPER := "TinserBoxMedia.exe"
@@ -33,6 +34,9 @@ var base_dir := _data_dir()
 var music_dir := base_dir.path_join("music")
 var backgrounds_dir := base_dir.path_join("backgrounds")
 var config_path := base_dir.path_join("settings.cfg")
+var playlists_path := base_dir.path_join("playlists.json")
+var playlists := {}  # name -> Array of absolute paths (order is the play order)
+var active_playlist := ALL_MUSIC
 var settings := ConfigFile.new()
 
 var tracks: Array[String] = []  # Current playlist (absolute paths) in display order.
@@ -129,6 +133,7 @@ func _ready() -> void:
 			library[music_dir.path_join(file)] = true
 	for f in extra_files:
 		library[f] = true
+	_load_playlists()
 	_rebuild("")
 
 	# System audio was the last source: wait for the helper instead of starting a song.
@@ -218,6 +223,12 @@ func _process(delta: float) -> void:
 
 func _rebuild(keep_path: String) -> void:
 	var list: Array[String] = []
+	if active_playlist != ALL_MUSIC:
+		# A named playlist keeps its own order, including songs that are currently missing.
+		for p in playlists.get(active_playlist, []):
+			list.append(p)
+		_set_tracks(list, keep_path)
+		return
 	for p in library:
 		if not (p in removed):
 			list.append(p)
@@ -232,16 +243,21 @@ func _rebuild(keep_path: String) -> void:
 			list.sort_custom(func(a, b): return FileAccess.get_modified_time(a) > FileAccess.get_modified_time(b))
 		_:
 			list.sort_custom(func(a, b): return a.get_file().naturalnocasecmp_to(b.get_file()) < 0)
+	_set_tracks(list, keep_path)
+
+
+func _set_tracks(list: Array[String], keep_path: String) -> void:
 	tracks = list
 	current = tracks.find(keep_path) if keep_path != "" else 0
-	if current < 0:
-		current = 0
 	if shuffle:
 		# Keep the existing shuffled cycle when possible: rebuild only if it no longer fits.
 		if order.size() != tracks.size():
-			_build_order(current)
+			_build_order(maxi(current, -1))
 	else:
-		_build_order(current)
+		_build_order(maxi(current, 0))
+	# The playing song may not be in this list (switched playlists): Next starts at the top.
+	if current < 0 and not tracks.is_empty():
+		pos = -1
 	playlist_changed.emit()
 
 
@@ -290,8 +306,11 @@ func add_paths(paths: PackedStringArray) -> void:
 			if not (p in extra_files) and not library.has(p):
 				extra_files.append(p)
 			library[p] = true
+			if active_playlist != ALL_MUSIC and not (p in playlists[active_playlist]):
+				playlists[active_playlist].append(p)
 			added += 1
 	if added > 0:
+		_save_playlists()
 		settings.set_value(PLAYLIST, "files", extra_files)
 		settings.set_value(PLAYLIST, "removed", removed)
 		settings.save(config_path)
@@ -299,8 +318,117 @@ func add_paths(paths: PackedStringArray) -> void:
 		_rebuild(current_path)
 
 
-## Removes tracks from the playlist only; files stay on disk. Restored if added again.
+# --- Named playlists ------------------------------------------------------------------
+
+func _load_playlists() -> void:
+	playlists = {}
+	if FileAccess.file_exists(playlists_path):
+		var data = JSON.parse_string(FileAccess.get_file_as_string(playlists_path))
+		if data is Dictionary:
+			for p in data.get("playlists", []):
+				if p is Dictionary and str(p.get("name", "")).strip_edges() != "":
+					playlists[str(p.name)] = Array(p.get("tracks", [])).map(func(t): return str(t))
+			active_playlist = str(data.get("active", ALL_MUSIC))
+	if not playlists.has(active_playlist):
+		active_playlist = ALL_MUSIC
+
+
+func _save_playlists() -> void:
+	var list := []
+	for n in playlists:
+		list.append({"name": n, "tracks": playlists[n]})
+	var f := FileAccess.open(playlists_path, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify({"schema": 1, "active": active_playlist, "playlists": list}, "\t"))
+
+
+func playlist_names() -> Array:
+	return [ALL_MUSIC] + playlists.keys()
+
+
+func create_playlist(playlist_name: String) -> bool:
+	var n := playlist_name.strip_edges()
+	if n == "" or n == ALL_MUSIC or playlists.has(n):
+		return false
+	playlists[n] = []
+	_save_playlists()
+	set_active_playlist(n)
+	return true
+
+
+func rename_playlist(old_name: String, new_name: String) -> bool:
+	var n := new_name.strip_edges()
+	if not playlists.has(old_name) or n == "" or n == ALL_MUSIC or playlists.has(n):
+		return false
+	var renamed := {}
+	for k in playlists:  # Keep the original position in the list.
+		renamed[n if k == old_name else k] = playlists[k]
+	playlists = renamed
+	if active_playlist == old_name:
+		active_playlist = n
+	_save_playlists()
+	playlist_changed.emit()
+	return true
+
+
+## Deletes the playlist only; its songs stay in All Music and on disk.
+func delete_playlist(playlist_name: String) -> void:
+	if not playlists.has(playlist_name):
+		return
+	playlists.erase(playlist_name)
+	if active_playlist == playlist_name:
+		active_playlist = ALL_MUSIC
+	_save_playlists()
+	_rebuild(current_path)
+
+
+## Switching never interrupts the song that is playing.
+func set_active_playlist(playlist_name: String) -> void:
+	active_playlist = playlist_name if playlists.has(playlist_name) else ALL_MUSIC
+	_save_playlists()
+	_rebuild(current_path)
+
+
+func add_to_playlist(playlist_name: String, paths: Array) -> void:
+	if not playlists.has(playlist_name):
+		return
+	var added := 0
+	for p in paths:
+		if not (p in playlists[playlist_name]):
+			playlists[playlist_name].append(p)
+			added += 1
+	_save_playlists()
+	notice.emit("Added %d song%s to %s" % [added, "" if added == 1 else "s", playlist_name])
+	if active_playlist == playlist_name:
+		_rebuild(current_path)
+
+
+## Drag-and-drop reordering inside a named playlist.
+func move_in_playlist(from_index: int, to_index: int) -> void:
+	if active_playlist == ALL_MUSIC:
+		return
+	var list: Array = playlists[active_playlist]
+	if from_index < 0 or from_index >= list.size():
+		return
+	var item = list.pop_at(from_index)
+	list.insert(clampi(to_index, 0, list.size()), item)
+	_save_playlists()
+	_rebuild(current_path)
+
+
+## In All Music: removes songs from the library view (files stay on disk, restored if added
+## again). In a named playlist: removes them from that playlist only.
 func remove_tracks(indices: Array) -> void:
+	if active_playlist != ALL_MUSIC:
+		var drop := []
+		for i in indices:
+			if i >= 0 and i < tracks.size():
+				drop.append(tracks[i])
+		for p in drop:
+			playlists[active_playlist].erase(p)
+		_save_playlists()
+		_rebuild(current_path)
+		return
 	for i in indices:
 		if i >= 0 and i < tracks.size():
 			var p := tracks[i]
@@ -447,7 +575,11 @@ func set_song_delay(seconds: int) -> void:
 
 func _advance_after_finish() -> void:
 	match repeat:
-		Repeat.ONE: _play(current)
+		Repeat.ONE:
+			if current >= 0:
+				_play(current)
+			else:
+				_step(1, true)
 		Repeat.ALL: _step(1, true)
 		Repeat.OFF: _step(1, false)
 

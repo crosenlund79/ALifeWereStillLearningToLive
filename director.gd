@@ -426,7 +426,8 @@ func _show_notification() -> void:
 func show_toast(text: String) -> void:
 	toast.text = text
 	toast.reset_size()
-	toast.position = hud.size - toast.size - Vector2(28, 24)
+	# Above the transport bar while the panel is open.
+	toast.position = hud.size - toast.size - Vector2(28, 84 if ui.overlay.visible else 24)
 	if _toast_tween:
 		_toast_tween.kill()
 	_toast_tween = create_tween()
