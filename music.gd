@@ -10,6 +10,7 @@ signal track_changed(index: int)
 signal playlist_changed
 signal notice(text: String)
 signal source_changed
+signal recording_changed
 
 enum Repeat { OFF, ALL, ONE }
 
@@ -79,6 +80,13 @@ var capture_playback: AudioStreamGeneratorPlayback
 var _pcm := PackedVector2Array()
 var _player_path := ""  # The local track to return to when leaving system audio.
 var _want_system := false
+
+# Recording system output (done by the helper: MP3, or WAV if MP3 encoding is unavailable).
+var recording := false
+var rec_started_at := 0.0
+var rec_format := ""  # "mp3" or "wav" once the helper confirms
+var rec_path := ""
+var last_recording := ""
 
 
 ## Editor: the project folder. Portable build: next to the executable. Installed build
@@ -168,6 +176,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.keycode == KEY_Q and event.ctrl_pressed:
 		quit_app()
+		return
+	if event.keycode == KEY_R and event.ctrl_pressed:
+		toggle_recording()
 		return
 	if event.ctrl_pressed or event.alt_pressed:
 		return
@@ -677,7 +688,7 @@ func toggle_fullscreen() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		_save_state()
-		if media_pid >= 0:
+		if media_pid >= 0 and not recording:
 			OS.kill(media_pid)
 
 
@@ -692,7 +703,9 @@ func _save_state() -> void:
 func quit_app() -> void:
 	_save_state()
 	stop_playback()
-	if media_pid >= 0:
+	if recording:
+		stop_recording()  # The helper finalizes the file, also once TinserBox has exited.
+	elif media_pid >= 0:
 		OS.kill(media_pid)
 	get_tree().quit()
 
@@ -880,6 +893,9 @@ func _poll_media_helper() -> void:
 			var parts := msg.substr(3).split("\t")
 			_set_system_track(parts[0], parts[1] if parts.size() > 1 else "")
 			continue
+		if msg.begins_with("rec "):
+			_on_rec_message(msg)
+			continue
 		if msg.begins_with("fmt "):
 			capture_gen.mix_rate = float(msg.substr(4))
 			if source == "system":
@@ -956,6 +972,98 @@ func set_source(new_source: String) -> bool:
 	audio.set_source(source)
 	set_app_setting("audio_source", source)
 	source_changed.emit()
+	return true
+
+
+# --- Recording ----------------------------------------------------------------------
+
+func recordings_dir() -> String:
+	var d := str(app_setting("recordings_dir", ""))
+	return d if d != "" else base_dir.path_join("recordings")
+
+
+func default_recording_name() -> String:
+	return "TinserBox recording " + Time.get_datetime_string_from_system().replace("T", " ").replace(":", "-")
+
+
+func _clean_name(text: String) -> String:
+	for ch in ["<", ">", ":", "\"", "/", "\\", "|", "?", "*"]:
+		text = text.replace(ch, "")
+	return text.strip_edges()
+
+
+## Records everything Windows plays (TinserBox included, once) via the helper.
+func start_recording(file_name := "") -> void:
+	if recording:
+		return
+	if not helper_connected:
+		notice.emit("Recording needs the Windows version (TinserBoxMedia.exe)")
+		return
+	var dir := recordings_dir()
+	DirAccess.make_dir_recursive_absolute(dir)
+	var base := _clean_name(file_name)
+	if base == "":
+		base = default_recording_name()
+	var path := dir.path_join(base)
+	var n := 2
+	while FileAccess.file_exists(path + ".mp3") or FileAccess.file_exists(path + ".wav"):
+		path = dir.path_join("%s (%d)" % [base, n])
+		n += 1
+	recording = true
+	rec_format = ""
+	rec_path = path
+	rec_started_at = Time.get_ticks_msec() / 1000.0
+	_helper_send("rec start " + path)
+	recording_changed.emit()
+
+
+func stop_recording() -> void:
+	if recording:
+		_helper_send("rec stop")
+
+
+func toggle_recording() -> void:
+	if recording:
+		stop_recording()
+	else:
+		start_recording()
+
+
+func recording_seconds() -> float:
+	return Time.get_ticks_msec() / 1000.0 - rec_started_at if recording else 0.0
+
+
+func _on_rec_message(msg: String) -> void:
+	var parts := msg.split(" ", true, 3)
+	match parts[1]:
+		"started":
+			rec_format = parts[2]
+			rec_path = parts[3] if parts.size() > 3 else rec_path
+			if rec_format == "wav":
+				notice.emit("MP3 encoder unavailable: recording as WAV")
+			else:
+				notice.emit("Recording to MP3")
+		"done":
+			recording = false
+			last_recording = parts[3] if parts.size() > 3 else rec_path
+			var kind := last_recording.get_extension().to_upper()
+			notice.emit("Saved %s recording (%s s): %s" % [kind, parts[2], last_recording.get_file()])
+		"error":
+			recording = false
+			notice.emit("Recording failed: " + (parts[2] if parts.size() > 2 else "unknown error"))
+	recording_changed.emit()
+
+
+## Renames the last finished recording, keeping its real extension (.mp3 or .wav).
+func rename_last_recording(new_name: String) -> bool:
+	var clean := _clean_name(new_name)
+	if last_recording == "" or clean == "" or not FileAccess.file_exists(last_recording):
+		return false
+	var target := last_recording.get_base_dir().path_join(clean + "." + last_recording.get_extension())
+	if FileAccess.file_exists(target) or DirAccess.rename_absolute(last_recording, target) != OK:
+		return false
+	last_recording = target
+	recording_changed.emit()
 	return true
 
 

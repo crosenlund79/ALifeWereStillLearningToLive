@@ -35,6 +35,7 @@ var mods := {"speed": 1.0, "glow": 1.0, "density": 1.0, "intensity": 1.0, "motio
 var mods_target := mods.duplicate()
 var color_a := Color(1.0, 0.82, 0.45)
 var color_b := Color(0.8, 0.5, 0.32)
+var palette: Array = []  # 7 element colours on screen (blending toward the target)
 var _tween: Tween
 var _auto_timer := 0.0
 var _cursor_idle := 0.0
@@ -46,6 +47,7 @@ var notify_title := Label.new()
 var notify_artist := Label.new()
 var toast := Label.new()
 var diag := Label.new()
+var rec_label := Label.new()
 var _notify_tween: Tween
 var _toast_tween: Tween
 
@@ -293,6 +295,13 @@ func _process(delta: float) -> void:
 	color_a = color_a.lerp(target_a, 1.0 - exp(-2.0 * delta))
 	color_b = color_b.lerp(target_b, 1.0 - exp(-2.0 * delta))
 	background.set_palette(color_a, color_b)
+	# Element palette: the song's own palette if saved, else the preset's.
+	var song_pal = music.song_setting("palette", null)
+	var pal_src: Array = song_pal if song_pal is Array and song_pal.size() == 7 else working.get("palette", Presets.PALETTE)
+	if palette.size() != 7:
+		palette = pal_src.map(func(c): return Color(c))
+	for k in 7:
+		palette[k] = (palette[k] as Color).lerp(Color(pal_src[k]), 1.0 - exp(-2.0 * delta))
 	background.motion_scale = float(music.song_setting("bg_motion", 1.0)) * mods.motion
 
 	var s_int := float(music.song_setting("intensity", 1.0))
@@ -310,12 +319,22 @@ func _process(delta: float) -> void:
 		layer.density = s_density * mods.density * (0.6 if role == "secondary" else 1.0)
 		layer.primary = color_a
 		layer.secondary = color_b
+		layer.cfg = cfg
+		layer.palette = palette
 	var bl: Control = layers.beatlight
 	bl.intensity = float(working.beat_light) * float(music.app_setting("beat_light_strength", 1.0))
 	bl.primary = color_a
 
 	# The pop-up is for when the panel is hidden; the panel shows the title itself.
 	notify_box.visible = not ui.overlay.visible and not ui.mini
+	# Recording indicator: always visible while recording, even with the interface hidden.
+	rec_label.visible = music.recording
+	if music.recording:
+		var secs := int(music.recording_seconds())
+		var dot := "●" if int(Time.get_ticks_msec() / 600) % 2 == 0 else "○"
+		rec_label.text = "%s REC %d:%02d%s" % [dot, secs / 60, secs % 60, "" if music.rec_format == "" else "  " + music.rec_format.to_upper()]
+		rec_label.reset_size()
+		rec_label.position.x = hud.size.x - rec_label.size.x - 24
 	_update_cursor(delta)
 	if diag.visible:
 		_diag_timer += delta
@@ -396,6 +415,18 @@ func _build_hud() -> void:
 	toast.add_theme_constant_override("shadow_offset_y", 1)
 	toast.modulate.a = 0.0
 	hud.add_child(toast)
+
+	rec_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	rec_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	rec_label.offset_right = -24
+	rec_label.offset_top = 14
+	rec_label.add_theme_font_override("font", BOLD_FONT)
+	rec_label.add_theme_font_size_override("font_size", 15)
+	rec_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.3))
+	rec_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+	rec_label.add_theme_constant_override("shadow_offset_y", 1)
+	rec_label.visible = false
+	hud.add_child(rec_label)
 
 	diag.position = Vector2(14, 12)
 	diag.add_theme_font_size_override("font_size", 12)

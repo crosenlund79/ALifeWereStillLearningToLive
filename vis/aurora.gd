@@ -46,7 +46,7 @@ func _allocate() -> void:
 	indices.clear()
 	for r in ROWS - 1:
 		for s in samples - 1:
-			var a := r * samples + s
+			var a: float = r * samples + s
 			var b := a + 1
 			var c := a + samples + 1
 			var d := a + samples
@@ -76,8 +76,9 @@ func draw() -> void:
 	for i in ribbons:
 		var depth := float(i) / maxf(ribbons - 1, 1)  # 0 = far, 1 = near
 		var base_y := h * (0.30 + 0.24 * depth)
-		var contour: float = h * (0.05 + 0.10 * A.mid + 0.04 * A.low_mid) * (0.6 + 0.6 * depth)
-		var broad: float = h * (0.03 + 0.07 * A.bass + 0.03 * A.sub)
+		var move: float = L.p("range", 1.0)  # Movement strength (1.0 = original)
+		var contour: float = h * (0.05 + 0.10 * A.mid + 0.04 * A.low_mid) * (0.6 + 0.6 * depth) * move
+		var broad: float = h * (0.03 + 0.07 * A.bass + 0.03 * A.sub) * move
 		var height: float = h * (0.10 + 0.20 * A.mid + 0.10 * A.bass + 0.08 * A.energy_slow) * (0.65 + 0.45 * depth) * L.intensity
 		var ripple: float = h * (0.004 + 0.014 * A.treble + 0.008 * A.air)
 		var alpha: float = clampf((0.16 + 0.34 * A.loudness + 0.25 * flare) * (0.45 + 0.55 * depth) * L.glow * calm, 0.0, 0.85)

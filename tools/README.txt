@@ -32,10 +32,15 @@ Everything is optional; missing songs or images are ignored.
 
 VISUALIZERS AND PRESETS
 -----------------------
-Visualizers: Waveform, Square Grid, Seven Waves, Retro Spectrum, Glowing Orbs,
-The Aurora, Particle Universe, Resonance Engine, The Seven Spirits.
+Visualizers: Multi-Waveform (1-7 lines), Square Grid, Retro Spectrum, The Aurora,
+Particle Universe, Resonance Engine, The Seven Spirits, Harmonic Ribbons,
+Pulse Rings, Northern Lights. Each has its own settings in the Visualizer tab, and
+every visualizer takes its colours from the preset's main/second colours and seven
+element colours (Reset colours restores them; "Save colours for this song" keeps
+them for one song).
 Built-in presets: Midnight Aurora, Stellar Drift, Clockwork Heart, Seven Souls,
-Neon Pulse, Almost Nothing, Golden Thread (the original look).
+Neon Pulse, Almost Nothing, Silk Harmonics, Echo Chamber, Polar Night,
+Golden Thread (the original look).
 Combine a main and a second visualizer, an atmosphere and the beat light in
 the Visualizer tab, then Save / Save as. "Restore built-ins" brings back the
 originals.
@@ -51,6 +56,7 @@ KEYBOARD (when TinserBox is focused)
   1-9          Choose preset          [ / ]       Previous / next preset
   F12          Screenshot (key configurable: screenshot_key in settings.cfg)
   F3           Diagnostics            Ctrl+Q      Quit
+  Ctrl+R       Start / stop recording system audio
   Ctrl+M       Mini player: small, borderless, always on top (drag it anywhere;
                Ctrl+M again restores the window). Always off at launch.
 
@@ -64,6 +70,16 @@ and artist come from Windows' media controls, so the song pop-up, per-song
 looks (section "Artist - Title" in settings.cfg) and automatic atmosphere
 work for those songs too. Visuals lag the sound by roughly 0.1 s. Click a
 song in the playlist (or choose TinserBox player) to return.
+
+RECORDING (Windows)
+-------------------
+Settings > Recording, or Ctrl+R: records everything Windows plays (TinserBox
+included, once) from your default output device. Saved as MP3 (320 kbps) using
+Windows' built-in encoder; if that encoder is unavailable the recording is saved
+as WAV instead, and TinserBox tells you which. Default name: date and time; type a
+name before starting, or use "Rename last" afterwards. Recordings go to
+recordings\ (changeable). Recording only starts when you press the button, and
+TinserBox can play the recordings back (add the folder to the playlist).
 
 MEDIA KEYS
 ----------

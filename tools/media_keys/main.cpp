@@ -6,15 +6,24 @@
 // 2. System audio ("visualize Spotify etc."): captures what the default output device
 //    plays (WASAPI loopback; no drivers or admin rights) and streams it to TinserBox as
 //    16-bit stereo PCM, so the visualizers can follow any app.
-// 3. Now playing: while capturing, reads the title/artist of the current media session
+// 3. Recording: writes the captured system output to MP3 (Windows' Media Foundation MP3
+//    encoder, 320 kbps) or, if that encoder is unavailable, to 16-bit PCM WAV. Gaps where
+//    nothing plays are filled with silence so recordings keep real time.
+// 4. Now playing: while capturing, reads the title/artist of the current media session
 //    (Spotify, browsers, ...) via GlobalSystemMediaTransportControlsSessionManager.
 //
 // Usage: TinserBoxMedia.exe <godot_udp_port> <godot_pid>
 // To Godot (UDP 127.0.0.1:<port>): "hello", "play", "pause", "stop", "next", "previous",
 //   "fmt <rate>", "np <title>\t<artist>", "error <step> <hr>", binary PCM packets (0x01 + int16 L/R).
-// From Godot: "state playing|paused|stopped", "title <text>", "capture on|off", "smtc on|off".
+// From Godot: "state playing|paused|stopped", "title <text>", "capture on|off", "smtc on|off",
+//   "rec start <path without extension>", "rec stop".
+// Recording replies: "rec started mp3|wav <path>", "rec done <seconds> <path>", "rec error <what>".
 // Exits when TinserBox exits.
 #include <winsock2.h>
+#include <windows.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
 #include <windows.h>
 #include <roapi.h>
 #include <winstring.h>
@@ -26,6 +35,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <algorithm>
+#include <cmath>
 
 // --- WinRT ABI interfaces not declared by mingw-w64 (vtable order from the Windows SDK IDL) ---
 struct IMusicDisplayProperties : IInspectable {
@@ -138,8 +149,9 @@ static const char *BUTTONS[] = {"play", "pause", "stop", "record", "fastforward"
 static SOCKET sock;
 static sockaddr_in godot = {};
 static ISMTC *smtc = nullptr;
-static volatile LONG capture_on = 0;
-static HANDLE capture_thread = nullptr;
+static volatile LONG capture_on = 0;  // Visualizing: send PCM to TinserBox.
+static volatile LONG recording = 0;   // Writing to a file.
+static volatile LONG capture_running = 0;
 static HANDLE np_thread = nullptr;
 static HRESULT last_capture_error = S_OK;  // Report each distinct failure once.
 
@@ -208,6 +220,162 @@ static void set_title(const std::string &text) {
     updater->Release();
 }
 
+// --- Recorder: MP3 via Media Foundation, else WAV -----------------------------------------
+
+static CRITICAL_SECTION rec_lock;
+static std::wstring rec_request;  // Path (no extension) waiting for the capture format.
+static bool rec_stop_request = false;
+static IMFSinkWriter *rec_writer = nullptr;
+static DWORD rec_stream = 0;
+static FILE *rec_wav = nullptr;
+static UINT64 rec_frames = 0;
+static int rec_rate = 0;
+static std::wstring rec_path;
+static LARGE_INTEGER rec_t0, qpc_freq;
+
+static std::wstring widen(const std::string &s) {
+    std::wstring w(MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), &w[0], (int)w.size());
+    return w;
+}
+
+static bool open_mp3(const std::wstring &path, int rate) {
+    static bool mf_started = false;
+    if (!mf_started) mf_started = SUCCEEDED(MFStartup(MF_VERSION, MFSTARTUP_LITE));
+    if (!mf_started || (rate != 32000 && rate != 44100 && rate != 48000)) return false;
+    IMFMediaType *out = nullptr, *in = nullptr;
+    HRESULT hr = MFCreateSinkWriterFromURL(path.c_str(), nullptr, nullptr, &rec_writer);
+    if (SUCCEEDED(hr)) hr = MFCreateMediaType(&out);
+    if (SUCCEEDED(hr)) hr = out->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+    if (SUCCEEDED(hr)) hr = out->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_MP3);
+    if (SUCCEEDED(hr)) hr = out->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, rate);
+    if (SUCCEEDED(hr)) hr = out->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, 2);
+    if (SUCCEEDED(hr)) hr = out->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 320000 / 8);
+    if (SUCCEEDED(hr)) hr = rec_writer->AddStream(out, &rec_stream);
+    if (SUCCEEDED(hr)) hr = MFCreateMediaType(&in);
+    if (SUCCEEDED(hr)) hr = in->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+    if (SUCCEEDED(hr)) hr = in->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+    if (SUCCEEDED(hr)) hr = in->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, rate);
+    if (SUCCEEDED(hr)) hr = in->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, 2);
+    if (SUCCEEDED(hr)) hr = in->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+    if (SUCCEEDED(hr)) hr = in->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, 4);
+    if (SUCCEEDED(hr)) hr = in->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, rate * 4);
+    if (SUCCEEDED(hr)) hr = rec_writer->SetInputMediaType(rec_stream, in, nullptr);
+    if (SUCCEEDED(hr)) hr = rec_writer->BeginWriting();
+    if (out) out->Release();
+    if (in) in->Release();
+    if (FAILED(hr) && rec_writer) {
+        rec_writer->Release();
+        rec_writer = nullptr;
+        DeleteFileW(path.c_str());
+    }
+    return SUCCEEDED(hr);
+}
+
+static void wav_header(FILE *f, int rate, UINT32 data_bytes) {
+    UINT32 riff = 36 + data_bytes, fmt_len = 16, byte_rate = rate * 4, srate = rate;
+    UINT16 pcm = 1, ch = 2, align = 4, bits = 16;
+    fseek(f, 0, SEEK_SET);
+    fwrite("RIFF", 1, 4, f); fwrite(&riff, 4, 1, f); fwrite("WAVEfmt ", 1, 8, f);
+    fwrite(&fmt_len, 4, 1, f); fwrite(&pcm, 2, 1, f); fwrite(&ch, 2, 1, f); fwrite(&srate, 4, 1, f);
+    fwrite(&byte_rate, 4, 1, f); fwrite(&align, 2, 1, f); fwrite(&bits, 2, 1, f);
+    fwrite("data", 1, 4, f); fwrite(&data_bytes, 4, 1, f);
+}
+
+// Called from the capture thread with the lock held.
+static void rec_open(int rate) {
+    std::wstring base = rec_request;
+    rec_request.clear();
+    rec_frames = 0;
+    rec_rate = rate;
+    QueryPerformanceFrequency(&qpc_freq);
+    QueryPerformanceCounter(&rec_t0);
+    const char *kind = "mp3";
+    rec_path = base + L".mp3";
+    if (!open_mp3(rec_path, rate)) {
+        kind = "wav";
+        rec_path = base + L".wav";
+        rec_wav = _wfopen(rec_path.c_str(), L"wb");
+        if (rec_wav) wav_header(rec_wav, rate, 0);
+    }
+    if (!rec_writer && !rec_wav) {
+        send_msg("rec error file");
+        InterlockedExchange(&recording, 0);
+        return;
+    }
+    std::string msg = std::string("rec started ") + kind + " " + utf8(rec_path.c_str(), (UINT32)rec_path.size());
+    send_msg(msg.c_str());
+}
+
+static void rec_write(const short *pcm, UINT32 frames) {
+    if (frames == 0) return;
+    if (rec_writer) {
+        IMFMediaBuffer *buf = nullptr;
+        IMFSample *sample = nullptr;
+        BYTE *dst = nullptr;
+        DWORD bytes = frames * 4;
+        if (SUCCEEDED(MFCreateMemoryBuffer(bytes, &buf)) && SUCCEEDED(buf->Lock(&dst, nullptr, nullptr))) {
+            memcpy(dst, pcm, bytes);
+            buf->Unlock();
+            buf->SetCurrentLength(bytes);
+            if (SUCCEEDED(MFCreateSample(&sample))) {
+                sample->AddBuffer(buf);
+                sample->SetSampleTime((LONGLONG)(rec_frames * 10000000ULL / rec_rate));
+                sample->SetSampleDuration((LONGLONG)(frames * 10000000ULL / rec_rate));
+                rec_writer->WriteSample(rec_stream, sample);
+                sample->Release();
+            }
+        }
+        if (buf) buf->Release();
+    } else if (rec_wav) {
+        fwrite(pcm, 4, frames, rec_wav);
+    }
+    rec_frames += frames;
+}
+
+// Keep real time: when nothing plays, loopback delivers no data, so write silence.
+static void rec_fill_silence() {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    UINT64 expected = (UINT64)((now.QuadPart - rec_t0.QuadPart) * (double)rec_rate / qpc_freq.QuadPart);
+    static short zeros[4800 * 2] = {0};
+    while (rec_frames + rec_rate / 10 < expected) {
+        UINT32 n = (UINT32)std::min((UINT64)4800, expected - rec_frames);
+        rec_write(zeros, n);
+    }
+}
+
+static void rec_close() {
+    double seconds = rec_rate ? (double)rec_frames / rec_rate : 0.0;
+    if (rec_writer) {
+        rec_writer->Finalize();
+        rec_writer->Release();
+        rec_writer = nullptr;
+    }
+    if (rec_wav) {
+        UINT64 bytes = rec_frames * 4;
+        wav_header(rec_wav, rec_rate, (UINT32)std::min(bytes, (UINT64)0xFFFFFFF0ULL));
+        fclose(rec_wav);
+        rec_wav = nullptr;
+    }
+    char head[64];
+    snprintf(head, sizeof(head), "rec done %.1f ", seconds);
+    std::string msg = head + utf8(rec_path.c_str(), (UINT32)rec_path.size());
+    send_msg(msg.c_str());
+    rec_stop_request = false;
+    InterlockedExchange(&recording, 0);
+}
+
+static void rec_service(int rate) {
+    EnterCriticalSection(&rec_lock);
+    if (!rec_request.empty() && !rec_writer && !rec_wav) rec_open(rate);
+    if (rec_writer || rec_wav) {
+        rec_fill_silence();
+        if (rec_stop_request) rec_close();
+    }
+    LeaveCriticalSection(&rec_lock);
+}
+
 // --- System audio capture (WASAPI loopback) -------------------------------------------
 
 static void capture_session() {
@@ -241,7 +409,9 @@ static void capture_session() {
         char packet[1 + 480 * 4];
         packet[0] = 1;
         int filled = 0;
-        while (capture_on) {
+        static short frame_buf[4096 * 2];
+        int rate = (int)fmt->nSamplesPerSec;
+        while (capture_on || recording) {
             Sleep(8);
             UINT32 next = 0;
             while (SUCCEEDED(hr = cap->GetNextPacketSize(&next)) && next > 0) {
@@ -249,6 +419,7 @@ static void capture_session() {
                 UINT32 frames = 0;
                 DWORD flags = 0;
                 if (FAILED(hr = cap->GetBuffer(&data, &frames, &flags, nullptr, nullptr))) break;
+                UINT32 done = 0;
                 for (UINT32 f = 0; f < frames; f++) {
                     float l = 0.0f, r = 0.0f;
                     if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT)) {
@@ -264,15 +435,26 @@ static void capture_session() {
                     }
                     short sl = (short)(l > 1.0f ? 32767 : l < -1.0f ? -32767 : l * 32767.0f);
                     short sr = (short)(r > 1.0f ? 32767 : r < -1.0f ? -32767 : r * 32767.0f);
-                    memcpy(packet + 1 + filled * 4, &sl, 2);
-                    memcpy(packet + 3 + filled * 4, &sr, 2);
-                    if (++filled == 480) {
-                        send_bytes(packet, sizeof(packet));
-                        filled = 0;
+                    frame_buf[done * 2] = sl;
+                    frame_buf[done * 2 + 1] = sr;
+                    if (++done == 4096 || f + 1 == frames) {
+                        EnterCriticalSection(&rec_lock);
+                        if (rec_writer || rec_wav) rec_write(frame_buf, done);
+                        LeaveCriticalSection(&rec_lock);
+                        done = 0;
+                    }
+                    if (capture_on) {
+                        memcpy(packet + 1 + filled * 4, &sl, 2);
+                        memcpy(packet + 3 + filled * 4, &sr, 2);
+                        if (++filled == 480) {
+                            send_bytes(packet, sizeof(packet));
+                            filled = 0;
+                        }
                     }
                 }
                 cap->ReleaseBuffer(frames);
             }
+            rec_service(rate);
             if (FAILED(hr)) break;  // e.g. the output device changed: reopen below.
         }
         client->Stop();
@@ -286,12 +468,29 @@ static void capture_session() {
 
 static DWORD WINAPI capture_loop(LPVOID) {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    while (capture_on) {
+    while (capture_on || recording) {
         capture_session();
-        for (int i = 0; i < 20 && capture_on; i++) Sleep(100);  // Device changed or missing: retry every 2 s.
+        if (recording && last_capture_error != S_OK) {
+            // No output device to record from: give up this recording rather than hang.
+            EnterCriticalSection(&rec_lock);
+            if (rec_writer || rec_wav) rec_close();
+            else {
+                rec_request.clear();
+                InterlockedExchange(&recording, 0);
+                send_msg("rec error capture");
+            }
+            LeaveCriticalSection(&rec_lock);
+        }
+        for (int i = 0; i < 20 && (capture_on || recording); i++) Sleep(100);  // Retry every 2 s.
     }
+    InterlockedExchange(&capture_running, 0);
     CoUninitialize();
     return 0;
+}
+
+static void ensure_capture_thread() {
+    if (InterlockedCompareExchange(&capture_running, 1, 0) == 0)
+        CloseHandle(CreateThread(nullptr, 0, capture_loop, nullptr, 0, nullptr));
 }
 
 // --- Now playing (other apps' media sessions) -----------------------------------------
@@ -357,15 +556,28 @@ static DWORD WINAPI now_playing_loop(LPVOID) {
 static void set_capture(bool on) {
     if (on && !capture_on) {
         InterlockedExchange(&capture_on, 1);
-        capture_thread = CreateThread(nullptr, 0, capture_loop, nullptr, 0, nullptr);
+        ensure_capture_thread();
         np_thread = CreateThread(nullptr, 0, now_playing_loop, nullptr, 0, nullptr);
     } else if (!on && capture_on) {
         InterlockedExchange(&capture_on, 0);
-        HANDLE threads[2] = {capture_thread, np_thread};
-        WaitForMultipleObjects(2, threads, TRUE, 4000);
-        CloseHandle(capture_thread);
+        WaitForSingleObject(np_thread, 4000);
         CloseHandle(np_thread);
     }
+}
+
+static void set_recording(const std::string &path_utf8) {
+    EnterCriticalSection(&rec_lock);
+    if (!path_utf8.empty()) {
+        if (!recording) {
+            rec_request = widen(path_utf8);
+            rec_stop_request = false;
+            InterlockedExchange(&recording, 1);
+        }
+    } else if (recording) {
+        rec_stop_request = true;
+    }
+    LeaveCriticalSection(&rec_lock);
+    if (recording) ensure_capture_thread();
 }
 
 static DWORD WINAPI receive_loop(LPVOID) {
@@ -376,7 +588,9 @@ static DWORD WINAPI receive_loop(LPVOID) {
         if (n <= 0) continue;
         buf[n] = 0;
         std::string msg(buf);
-        if (msg == "capture on") set_capture(true);
+        if (msg.rfind("rec start ", 0) == 0) set_recording(msg.substr(10));
+        else if (msg == "rec stop") set_recording("");
+        else if (msg == "capture on") set_capture(true);
         else if (msg == "capture off") set_capture(false);
         else if (!smtc) continue;
         else if (msg == "state playing") smtc->put_PlaybackStatus(STATUS_PLAYING);
@@ -402,6 +616,19 @@ static void report(const char *step, HRESULT hr) {
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
     int argc = 0;
     LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    InitializeCriticalSection(&rec_lock);
+    if (argc == 3 && wcscmp(argv[1], L"--selftest-rec") == 0) {
+        // Diagnostics: write a 3 s 440 Hz tone through the recorder (MP3, else WAV).
+        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        rec_request = argv[2];
+        rec_open(48000);
+        static short tone[48000 * 2];
+        for (int i = 0; i < 48000; i++) tone[i * 2] = tone[i * 2 + 1] = (short)(8000 * sin(i * 2.0 * 3.14159265 * 440.0 / 48000));
+        for (int k = 0; k < 3; k++) rec_write(tone, 48000);
+        rec_close();
+        wprintf(L"%ls\n", rec_path.c_str());
+        return 0;
+    }
     if (argc < 3) return 1;
     int port = _wtoi(argv[1]);
     HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)_wtoi(argv[2]));
@@ -462,6 +689,11 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int) {
             TranslateMessage(&m);
             DispatchMessageW(&m);
         }
+    }
+    // TinserBox exited: finish any recording so the file is valid.
+    if (recording) {
+        set_recording("");
+        for (int i = 0; i < 50 && recording; i++) Sleep(100);
     }
     InterlockedExchange(&capture_on, 0);
     if (smtc) {

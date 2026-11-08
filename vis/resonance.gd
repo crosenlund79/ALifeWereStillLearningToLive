@@ -97,7 +97,7 @@ func draw() -> void:
 	for r in rings:
 		var f := float(r) / (rings - 1)
 		var radius: float = big * (0.16 + 0.82 * f) * (1.0 + 0.07 * core * (1.0 - f)) * (0.85 + 0.15 * L.intensity)
-		var distort: float = big * 0.025 * (A.mid * (1.0 - f * 0.5) + A.upper_mid * f) * L.intensity
+		var distort: float = big * 0.025 * (A.mid * (1.0 - f * 0.5) + A.upper_mid * f) * L.intensity * L.p("range", 1.0)
 		var col: Color = L.primary.lerp(L.secondary, f)
 		var alpha: float = (0.3 + 0.35 * A.loudness + 0.25 * sync) * calm
 		var width := 1.2 + 2.6 * (1.0 - f)

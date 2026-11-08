@@ -2,8 +2,9 @@
 
 A Godot 4.3 music player and audio-reactive visualizer.
 
-Nine visualizers (Waveform, Square Grid, Seven Waves, Retro Spectrum, Glowing Orbs,
-The Aurora, Particle Universe, Resonance Engine, The Seven Spirits) can be layered with an
+Ten visualizers (Multi-Waveform, Square Grid, Retro Spectrum, The Aurora, Particle Universe,
+Resonance Engine, The Seven Spirits, Harmonic Ribbons, Pulse Rings, Northern Lights), each with
+its own settings and fully customizable colours, can be layered with an
 atmosphere and a beat light over an animated background, saved as presets, and assigned per
 song or chosen automatically from how a song sounds.
 
@@ -43,7 +44,9 @@ those songs (`settings.cfg` section `Artist - Title`).
 Space play/pause · Enter restart after 2 s · Left/Right seek 5 s · Up/Down volume · M mute ·
 N/P next/previous · S shuffle · R repeat (off/all/one) · F fullscreen · Esc show/hide interface ·
 H hide interface until H again · 1-9 presets · [ ] previous/next preset · F12 screenshot ·
-F3 diagnostics · Ctrl+M mini player · Ctrl+Q quit.
+F3 diagnostics · Ctrl+M mini player · Ctrl+R record system audio · Ctrl+Q quit.
+
+Recordings (Windows): `TinserBoxMedia.exe` writes the loopback capture to MP3 via Media Foundation, or WAV if the MP3 encoder is unavailable.
 Hardware media keys (Play/Pause, Next, Previous, Stop) go through Windows' media controls
 via `TinserBoxMedia.exe` (`tools/media_keys/`), so they also work in the background.
 

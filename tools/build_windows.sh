@@ -29,7 +29,7 @@ python3 "$ROOT/tools/make_icon.py"
 # 3. Media-key helper (Windows System Media Transport Controls).
 x86_64-w64-mingw32-windres "$ROOT/tools/media_keys/TinserBoxMedia.rc" -O coff -o "$ROOT/build/windows/media_res.o"
 x86_64-w64-mingw32-g++ -O2 -s -static -mwindows -o "$APP/TinserBoxMedia.exe" \
-  "$ROOT/tools/media_keys/main.cpp" "$ROOT/build/windows/media_res.o" -lws2_32 -lruntimeobject -lole32 -luuid
+  "$ROOT/tools/media_keys/main.cpp" "$ROOT/build/windows/media_res.o" -lws2_32 -lruntimeobject -lole32 -luuid -lmfplat -lmfreadwrite -lmfuuid
 
 # 4. Godot export (single exe with embedded pck; music/backgrounds stay external).
 RCEDIT="$HOME/.local/share/rcedit/rcedit-x64.exe"

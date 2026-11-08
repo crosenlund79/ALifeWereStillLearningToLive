@@ -8,7 +8,13 @@ extends RefCounted
 
 const SCHEMA := 1
 
-const LAYER_DEFAULT := {"mode": "none", "opacity": 1.0, "scale": 1.0, "intensity": 1.0, "speed": 1.0, "glow": 1.0, "trail": 0.5, "additive": true}
+const LAYER_DEFAULT := {
+	"mode": "none", "opacity": 1.0, "scale": 1.0, "intensity": 1.0, "speed": 1.0, "glow": 1.0, "trail": 0.5, "additive": true,
+	# Visualizer-specific (each mode reads the ones it needs; see visual_layer.gd MODE_PARAMS).
+	"count": 7, "size": 1.0, "thickness": 1.0, "range": 1.0, "response": 1.0, "spacing": 1.0, "depth": 1.0, "density": 1.0,
+}
+## Default colours for multi-element visualizers (lines, spirits, rings, ribbons, blocks...).
+const PALETTE := ["#ffcc66", "#ff9952", "#f57585", "#c785f5", "#75a3ff", "#5cdbdb", "#8ff299"]
 const DEFAULT := {
 	"name": "Untitled",
 	"main": {"mode": "waveform"},
@@ -17,6 +23,7 @@ const DEFAULT := {
 	"beat_light": 0.0,
 	"background": {"kenburns": 0.4, "parallax": 0.3, "breathing": 0.4, "vignette": 0.45, "dim": 0.15, "wash": 0.0, "blur": 0.0, "bloom": 0.2, "shimmer": 0.2},
 	"colors": ["#ffd173", "#cc8052"],
+	"palette": PALETTE,
 }
 
 static func builtins() -> Array:
@@ -59,30 +66,62 @@ static func builtins() -> Array:
 		},
 		{
 			"name": "Neon Pulse",
-			"main": {"mode": "waveform", "intensity": 1.35, "glow": 1.6, "speed": 1.2},
-			"secondary": {"mode": "seven_waves", "opacity": 0.3, "intensity": 0.8, "additive": true},
+			"main": {"mode": "waveform", "count": 5, "intensity": 1.3, "glow": 1.5, "speed": 1.2, "thickness": 1.2},
+			"secondary": {"mode": "pulse_rings", "opacity": 0.3, "intensity": 0.8},
 			"atmosphere": {"mode": "glow", "opacity": 0.5},
-			"beat_light": 0.55,
+			"beat_light": 0.5,
 			"background": {"kenburns": 0.3, "parallax": 0.2, "breathing": 0.7, "vignette": 0.7, "dim": 0.55, "wash": 0.35, "blur": 0.2, "bloom": 0.35, "shimmer": 0.5},
 			"colors": ["#ff4fd8", "#35e0ff"],
+			"palette": ["#ff4fd8", "#b45cff", "#5c7cff", "#35e0ff", "#3dffb5", "#ffe14f", "#ff8a3d"],
 		},
 		{
 			"name": "Almost Nothing",
-			"main": {"mode": "waveform", "intensity": 0.55, "glow": 0.7, "speed": 0.7, "opacity": 0.8},
+			"main": {"mode": "waveform", "count": 1, "intensity": 0.55, "glow": 0.7, "speed": 0.7, "opacity": 0.8},
 			"secondary": {"mode": "none"},
 			"atmosphere": {"mode": "dust", "opacity": 0.35},
 			"beat_light": 0.0,
 			"background": {"kenburns": 0.35, "parallax": 0.2, "breathing": 0.2, "vignette": 0.4, "dim": 0.1, "wash": 0.0, "blur": 0.0, "bloom": 0.15, "shimmer": 0.15},
 			"colors": ["#ffd173", "#cc8052"],
+			"palette": ["#ffd173", "#e8a85c", "#cc8052", "#ffd173", "#e8a85c", "#cc8052", "#ffd173"],
+		},
+		{
+			"name": "Silk Harmonics",
+			"main": {"mode": "ribbons", "count": 4, "glow": 1.1, "speed": 0.9},
+			"secondary": {"mode": "particles", "opacity": 0.25, "intensity": 0.7, "density": 0.6},
+			"atmosphere": {"mode": "dust", "opacity": 0.4},
+			"beat_light": 0.1,
+			"background": {"kenburns": 0.5, "parallax": 0.4, "breathing": 0.4, "vignette": 0.65, "dim": 0.55, "wash": 0.2, "blur": 0.35, "bloom": 0.15, "shimmer": 0.3},
+			"colors": ["#ffd9a0", "#8f7cff"],
+			"palette": ["#ffcf7a", "#ff8f8f", "#c48cff", "#7fb8ff", "#7ff0d2", "#ffe39a", "#ff9fd4"],
+		},
+		{
+			"name": "Echo Chamber",
+			"main": {"mode": "pulse_rings", "count": 6, "glow": 1.1},
+			"secondary": {"mode": "spirits", "opacity": 0.35, "size": 0.7},
+			"atmosphere": {"mode": "glow", "opacity": 0.45},
+			"beat_light": 0.2,
+			"background": {"kenburns": 0.3, "parallax": 0.3, "breathing": 0.6, "vignette": 0.7, "dim": 0.58, "wash": 0.25, "blur": 0.3, "bloom": 0.15, "shimmer": 0.3},
+			"colors": ["#ffcc66", "#5cdbdb"],
+		},
+		{
+			"name": "Polar Night",
+			"main": {"mode": "northern_lights", "count": 3, "glow": 1.0, "speed": 0.9},
+			"secondary": {"mode": "particles", "opacity": 0.3, "intensity": 0.6, "density": 0.5, "size": 0.7},
+			"atmosphere": {"mode": "none"},
+			"beat_light": 0.05,
+			"background": {"kenburns": 0.4, "parallax": 0.3, "breathing": 0.3, "vignette": 0.7, "dim": 0.7, "wash": 0.3, "blur": 0.4, "bloom": 0.05, "shimmer": 0.2},
+			"colors": ["#4dffa6", "#a64dff"],
+			"palette": ["#4dffa6", "#33e0c0", "#7dff7a", "#4dd2ff", "#a64dff", "#ff7ad9", "#ffe17a"],
 		},
 		{
 			"name": "Golden Thread",
-			"main": {"mode": "waveform", "additive": false},
+			"main": {"mode": "waveform", "count": 1, "additive": false},
 			"secondary": {"mode": "none"},
 			"atmosphere": {"mode": "none"},
 			"beat_light": 0.0,
 			"background": {"kenburns": 0.0, "parallax": 0.0, "breathing": 0.0, "vignette": 0.0, "dim": 0.0, "wash": 0.0, "blur": 0.0, "bloom": 0.0, "shimmer": 0.0},
 			"colors": ["#ffd173", "#cc8052"],
+			"palette": ["#ffd173", "#ff9952", "#f57585", "#c785f5", "#75a3ff", "#5cdbdb", "#8ff299"],
 		},
 	]
 
@@ -93,6 +132,18 @@ static func builtin_names() -> Array:
 
 ## Fill in every missing key so code can rely on a complete preset.
 static func complete(p: Dictionary) -> Dictionary:
+	p = p.duplicate(true)
+	# Migrate visualizers that were merged or removed in TinserBox 2.1.
+	for layer in ["main", "secondary"]:
+		var l = p.get(layer)
+		if l is Dictionary:
+			if l.get("mode") == "seven_waves":
+				l.mode = "waveform"
+				l.count = l.get("count", 7)
+			elif l.get("mode") == "orbs":
+				l.mode = "spirits"
+			elif l.get("mode") == "waveform" and not l.has("count"):
+				l.count = 1
 	var out: Dictionary = DEFAULT.duplicate(true)
 	for k in p:
 		if out.get(k) is Dictionary and p[k] is Dictionary:

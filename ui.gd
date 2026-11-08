@@ -5,6 +5,7 @@ extends Control
 
 const Common := preload("res://vis/common.gd")
 const Layer := preload("res://vis/visual_layer.gd")
+const Presets := preload("res://presets.gd")
 const GOLD := Color(0.96, 0.82, 0.52)
 const IDLE_TIME := 4.0
 const FADE_TIME := 0.8
@@ -60,6 +61,15 @@ var eq_sliders: Array[VSlider] = []
 var eq_toggle := CheckButton.new()
 var backgrounds: Array[String] = []
 var studio_controls := {}  # "section/key" -> Control
+var mode_grid: GridContainer  # Settings specific to the main layer's visualizer.
+var mode_grid_for := ""
+var main_color_button := ColorPickerButton.new()
+var second_color_button := ColorPickerButton.new()
+var palette_buttons: Array[ColorPickerButton] = []
+var rec_button: Button
+var rec_status := Label.new()
+var rec_name := LineEdit.new()
+var rec_dir_label := Label.new()
 var song_controls := {}  # key -> HSlider
 var play_button: Button
 var lock_button: Button
@@ -259,8 +269,36 @@ func _build_studio_tab(tabs: TabContainer) -> void:
 	_studio_slider(g, "Intensity", "main", "intensity", 0.0, 2.0)
 	_studio_slider(g, "Motion speed", "main", "speed", 0.2, 2.0)
 	_studio_slider(g, "Glow", "main", "glow", 0.0, 2.0)
-	_studio_slider(g, "Trails", "main", "trail", 0.0, 1.0)
 	_studio_check(g, "Light blend", "main", "additive", "Additive blending: overlapping light adds up")
+	mode_grid = _grid4(col)  # Filled per visualizer in _rebuild_mode_grid().
+
+	_section(col, "Colours")
+	var cg := _grid4(col)
+	_label(cg, "Main colour")
+	_fill(cg, _studio_color(main_color_button, -1))
+	_label(cg, "Second colour")
+	_fill(cg, _studio_color(second_color_button, -2))
+	var pal_row := HBoxContainer.new()
+	pal_row.add_theme_constant_override("separation", 4)
+	col.add_child(pal_row)
+	var pal_label := Label.new()
+	pal_label.text = "Element colours"
+	pal_label.custom_minimum_size.x = 120
+	pal_label.add_theme_color_override("font_color", Color(GOLD, 0.8))
+	pal_label.tooltip_text = "Lines, spirits, rings, ribbons, curtains, grid and block colours (1 = first / lowest)"
+	pal_row.add_child(pal_label)
+	for k in 7:
+		var b := ColorPickerButton.new()
+		b.custom_minimum_size = Vector2(30, 24)
+		b.size_flags_horizontal = SIZE_EXPAND_FILL
+		pal_row.add_child(_studio_color(b, k))
+		palette_buttons.append(b)
+	var col_row := HBoxContainer.new()
+	col_row.add_theme_constant_override("separation", 6)
+	col.add_child(col_row)
+	_button(col_row, "Reset colours", _reset_colours, "Restore this preset's original colours")
+	_button(col_row, "Save colours for this song", _song_colours.bind(true), "This song keeps these colours whatever preset it uses")
+	_button(col_row, "Clear song colours", _song_colours.bind(false), "This song uses the preset's colours again")
 
 	_section(col, "Second layer")
 	g = _grid4(col)
@@ -455,13 +493,46 @@ func _build_settings_tab(tabs: TabContainer) -> void:
 	_button(shot_row, "Take screenshot", func(): director.take_screenshot(), "Save a PNG of the visualizer (%s)" % music.app_setting("screenshot_key", "F12"))
 	_button(shot_row, "Diagnostics", _toggle_diag, "Show or hide the diagnostics overlay (F3)")
 
+	_section(col, "Recording")
+	var rec_row := HBoxContainer.new()
+	rec_row.add_theme_constant_override("separation", 8)
+	col.add_child(rec_row)
+	rec_button = _button(rec_row, "Start recording", _on_record_button, "Record everything Windows is playing, TinserBox included (Ctrl+R). MP3, or WAV if MP3 encoding is unavailable.")
+	rec_status.size_flags_horizontal = SIZE_EXPAND_FILL
+	rec_status.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	rec_row.add_child(rec_status)
+	var name_row := HBoxContainer.new()
+	name_row.add_theme_constant_override("separation", 8)
+	col.add_child(name_row)
+	rec_name.placeholder_text = "File name (default: date and time)"
+	rec_name.size_flags_horizontal = SIZE_EXPAND_FILL
+	name_row.add_child(rec_name)
+	_button(name_row, "Rename last", func():
+		if music.rename_last_recording(rec_name.text):
+			director.show_toast("Renamed to " + music.last_recording.get_file())
+			rec_name.text = ""
+		else:
+			director.show_toast("Type a new, unused name for the last recording"), "Rename the last finished recording to the name typed on the left")
+	var dir_row := HBoxContainer.new()
+	dir_row.add_theme_constant_override("separation", 8)
+	col.add_child(dir_row)
+	rec_dir_label.size_flags_horizontal = SIZE_EXPAND_FILL
+	rec_dir_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	rec_dir_label.text = music.recordings_dir()
+	dir_row.add_child(rec_dir_label)
+	_button(dir_row, "Choose folder", func():
+		file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+		file_dialog.set_meta("purpose", "recordings")
+		file_dialog.popup_centered_ratio(0.7), "Where recordings are saved")
+
 	_section(col, "Keys")
 	var help := Label.new()
 	help.text = "\n".join([
 		"Space play/pause · Enter restart in 2 s · Left/Right seek",
 		"Up/Down volume · M mute · N/P next/previous · S shuffle",
 		"R repeat · F fullscreen · Esc show/hide · H hide until H",
-		"1-9 presets · [ ] previous/next preset · Ctrl+M mini player · Ctrl+Q quit",
+		"1-9 presets · [ ] previous/next preset · Ctrl+M mini player",
+		"Ctrl+R record system audio · Ctrl+Q quit",
 		"%s screenshot · F3 diagnostics" % music.app_setting("screenshot_key", "F12"),
 	])
 	col.add_child(help)
@@ -620,6 +691,7 @@ func _process(delta: float) -> void:
 	syncing = true
 	volume_slider.value = 0.0 if music.muted else music.volume * 100.0
 	syncing = false
+	_update_recording_ui()
 	var auto_text: String = ("%s (%s)" % [director.auto_choice, director.auto_reason]) if director.auto_choice != "" else ("Listening..." if director.source == "auto" else "Off")
 	if auto_label.text != auto_text:
 		auto_label.text = auto_text
@@ -761,7 +833,10 @@ func _open_dialog(mode: FileDialog.FileMode) -> void:
 
 
 func _on_dir_selected(dir: String) -> void:
-	if file_dialog.get_meta("purpose", "music") == "screenshots":
+	if file_dialog.get_meta("purpose", "music") == "recordings":
+		music.set_app_setting("recordings_dir", dir)
+		rec_dir_label.text = dir
+	elif file_dialog.get_meta("purpose", "music") == "screenshots":
 		music.set_app_setting("screenshot_dir", dir)
 		shot_dir_label.text = dir
 	else:
@@ -799,10 +874,76 @@ func _sync_song() -> void:
 	syncing = false
 
 
+## Shows only the settings that apply to the main layer's current visualizer.
+func _rebuild_mode_grid() -> void:
+	var mode: String = director.working.main.mode
+	if mode == mode_grid_for:
+		return
+	mode_grid_for = mode
+	for c in mode_grid.get_children():
+		c.queue_free()
+	for k in studio_controls.keys():
+		if studio_controls[k].get_parent() == mode_grid:
+			studio_controls.erase(k)
+	var params: Dictionary = Layer.MODE_PARAMS.get(mode, {})
+	for key in params:
+		var spec: Array = params[key]
+		_studio_slider(mode_grid, spec[0], "main", key, spec[1], spec[2], spec[3])
+
+
+func _studio_color(button: ColorPickerButton, index: int) -> ColorPickerButton:
+	button.edit_alpha = false
+	button.focus_mode = FOCUS_NONE
+	button.custom_minimum_size.y = 24
+	button.color_changed.connect(func(c: Color):
+		if syncing:
+			return
+		if index < 0:
+			var cols: Array = director.working.colors.duplicate()
+			cols[-index - 1] = "#" + c.to_html(false)
+			director.edit("", "colors", cols)
+		else:
+			var pal: Array = director.working.get("palette", []).duplicate()
+			pal[index] = "#" + c.to_html(false)
+			director.edit("", "palette", pal))
+	popups.append(button.get_popup())
+	return button
+
+
+func _reset_colours() -> void:
+	var source := {}
+	for b in Presets.builtins():
+		if b.name == director.working_name:
+			source = b
+	var colors: Array = source.get("colors", Presets.DEFAULT.colors)
+	var pal: Array = source.get("palette", Presets.PALETTE)
+	director.edit("", "colors", colors.duplicate())
+	director.edit("", "palette", pal.duplicate())
+
+
+func _song_colours(save: bool) -> void:
+	if save:
+		music.set_song_setting("color", Color(director.working.colors[0]))
+		music.set_song_setting("color2", Color(director.working.colors[1]))
+		music.set_song_setting("palette", director.working.palette.duplicate())
+		director.show_toast("Colours saved for this song")
+	else:
+		for key in ["color", "color2", "palette"]:
+			music.set_song_setting(key, null)
+		director.show_toast("This song uses the preset's colours")
+	_sync_song()
+
+
 func _sync_studio() -> void:
 	if director.working.is_empty():
 		return
+	_rebuild_mode_grid()
 	syncing = true
+	main_color_button.color = Color(director.working.colors[0])
+	second_color_button.color = Color(director.working.colors[1])
+	var pal: Array = director.working.get("palette", [])
+	for k in mini(pal.size(), palette_buttons.size()):
+		palette_buttons[k].color = Color(pal[k])
 	_fill_preset_list(preset_select, director.working_name)
 	for path in studio_controls:
 		var parts: PackedStringArray = path.split("/")
@@ -938,6 +1079,25 @@ func _update_source_ui() -> void:
 	source_select.select(0 if player else 1)
 
 
+func _on_record_button() -> void:
+	if music.recording:
+		music.stop_recording()
+	else:
+		music.start_recording(rec_name.text)
+		rec_name.text = ""
+
+
+func _update_recording_ui() -> void:
+	rec_button.text = "Stop recording" if music.recording else "Start recording"
+	if music.recording:
+		var secs := int(music.recording_seconds())
+		rec_status.text = "Recording %d:%02d%s" % [secs / 60, secs % 60, "" if music.rec_format == "" else " (" + music.rec_format.to_upper() + ")"]
+	elif music.last_recording != "":
+		rec_status.text = "Last: " + music.last_recording.get_file()
+	else:
+		rec_status.text = "Windows only. Recording starts only when you press the button."
+
+
 func _on_save_as() -> void:
 	var n := preset_name_edit.text.strip_edges()
 	if n != "":
@@ -1008,13 +1168,13 @@ func _color_row(button: ColorPickerButton, key: String) -> HBoxContainer:
 
 # --- Studio controls --------------------------------------------------------------------
 
-func _studio_slider(g: GridContainer, text: String, section: String, key: String, lo: float, hi: float) -> void:
+func _studio_slider(g: GridContainer, text: String, section: String, key: String, lo: float, hi: float, step := 0.01) -> void:
 	_label(g, text)
 	var s := _slider(0.0, hi, func(v: float):
 		if not syncing:
 			director.edit(section, key, v))
 	s.min_value = lo
-	s.step = 0.01
+	s.step = step
 	studio_controls[section + "/" + key] = s
 	_fill(g, s)
 

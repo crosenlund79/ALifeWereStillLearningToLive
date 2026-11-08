@@ -52,7 +52,7 @@ func _init(layer: Control, _mode: String) -> void:
 	ph_y.resize(7)
 	flash.resize(7)
 	for i in 7:
-		var a := i * TAU / 7.0
+		var a: float = i * TAU / 7.0
 		pos[i] = Vector2(cos(a), sin(a)) * 0.15
 		ph_x[i] = i * 1.3
 		ph_y[i] = i * 2.1
@@ -91,19 +91,23 @@ func update(delta: float) -> void:
 	sync = maxf(sync - delta * 1.2, 0.0)
 	common_phase += delta * 0.6
 
+	# Customization: Spacing, Movement range, Responsiveness (1.0 = the original behaviour).
+	var spacing: float = L.p("spacing", 1.0)
+	var move_range: float = L.p("range", 1.0)
+	var response: float = L.p("response", 1.0)
 	for i in 7:
 		var p: Array = PERSONA[i]
 		var e: float = A.bands7[i]
 		ph_x[i] += delta * p[3] * (2.0 + 3.0 * e) * TAU * 0.25
 		ph_y[i] += delta * p[4] * (2.0 + 3.0 * e) * TAU * 0.25
-		var px := lerpf(ph_x[i], common_phase, sync)
-		var py := lerpf(ph_y[i], common_phase * 1.3, sync)
+		var px: float = lerpf(ph_x[i], common_phase, sync)
+		var py: float = lerpf(ph_y[i], common_phase * 1.3, sync)
 
-		var a := form_rot + i * TAU / 7.0
+		var a: float = form_rot + i * TAU / 7.0
 		var ring := Vector2(cos(a) * 0.36 * aspect * 0.62, sin(a) * 0.24) * spread
 		var arc := Vector2((i - 3) / 3.0 * 0.40 * aspect * 0.62, sin(i * 0.9 + t * 0.2) * 0.07 - 0.02) * (0.6 + 0.5 * spread)
-		var anchor := ring.lerp(arc, line_amount)
-		var wander := Vector2(sin(px) * p[1], sin(py) * p[2]) * (0.45 + 1.3 * e) * (0.6 + 0.5 * spread)
+		var anchor: Vector2 = ring.lerp(arc, line_amount) * spacing
+		var wander := Vector2(sin(px) * p[1], sin(py) * p[2]) * (0.45 + 1.3 * e) * (0.6 + 0.5 * spread) * move_range
 		var pair := Vector2.ZERO
 		if i < 6:
 			var side := 1.0 if i % 2 == 0 else -1.0
@@ -111,21 +115,21 @@ func update(delta: float) -> void:
 		var target := anchor + wander + pair
 
 		var mass: float = p[0]
-		var k := 7.0 / mass
+		var k: float = 7.0 / mass * (0.6 + 0.4 * response)
 		var c := 2.0 * sqrt(k) * 0.5
-		var acc := (target - pos[i]) * k - vel[i] * c
+		var acc: Vector2 = (target - pos[i]) * k - vel[i] * c
 		# Register-specific transient response.
 		var out_dir := pos[i].normalized() if pos[i].length() > 0.001 else Vector2.RIGHT
 		var hit := 0.0
 		if i <= 2:
 			hit = A.kick
-			acc += out_dir * A.kick * 3.2 / mass
+			acc += out_dir * A.kick * 3.2 / mass * response
 		elif i == 3:
 			hit = A.onset
-			acc += out_dir * A.onset * 2.0 / mass
+			acc += out_dir * A.onset * 2.0 / mass * response
 		else:
 			hit = A.snap
-			acc += out_dir.orthogonal() * A.snap * 2.4 / mass * (1.0 if i % 2 == 0 else -1.0)
+			acc += out_dir.orthogonal() * A.snap * 2.4 / mass * (1.0 if i % 2 == 0 else -1.0) * response
 		flash[i] = maxf(flash[i] - delta * 3.0, hit)
 		vel[i] += acc * delta
 		pos[i] += vel[i] * delta
@@ -150,9 +154,10 @@ func draw() -> void:
 	var calm: float = 1.0 - A.silence_amount * 0.45
 	var glow: float = L.glow * calm
 	var length := int(trail_len * clampf(0.25 + L.trail, 0.25, 1.0))
+	var sz: float = L.p("size", 1.0)
 	for i in 7:
 		var e: float = A.bands7[i]
-		var col: Color = (Common.BAND_COLORS[i] as Color).lerp(L.primary, 0.2)
+		var col: Color = L.color(i)  # Each spirit has its own colour (element palette).
 		# Trail: oldest -> newest, thickening and brightening toward the spirit.
 		var prev := center + trails[i][(trail_head - length + 1 + trail_len) % trail_len] * unit
 		for k in range(1, length):
@@ -162,7 +167,7 @@ func draw() -> void:
 			L.draw_line(prev, p, Color(col, f * f * 0.32 * glow), (0.8 + 3.2 * f) * unit / 941.0, true)
 			prev = p
 		var at := center + pos[i] * unit
-		var halo: float = unit * (0.07 + 0.09 * e) * (1.0 + flash[i] * 0.35) * (0.8 + 0.2 * L.intensity)
+		var halo: float = unit * (0.07 + 0.09 * e) * (1.0 + flash[i] * 0.35) * (0.8 + 0.2 * L.intensity) * sz
 		Common.draw_soft(L, at, halo, Color(col, (0.3 + 0.5 * e + 0.25 * flash[i]) * glow))
-		Common.draw_soft(L, at, unit * (0.026 + 0.016 * e + 0.014 * flash[i]), Color(col.lightened(0.5), 0.95 * calm))
-		L.draw_circle(at, unit * 0.0045, Color(1, 1, 1, 0.85 * calm))
+		Common.draw_soft(L, at, unit * (0.026 + 0.016 * e + 0.014 * flash[i]) * sz, Color(col.lightened(0.5), 0.95 * calm))
+		L.draw_circle(at, unit * 0.0045 * sz, Color(1, 1, 1, 0.85 * calm))
