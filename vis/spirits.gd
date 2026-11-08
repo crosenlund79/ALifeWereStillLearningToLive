@@ -148,6 +148,15 @@ func update(delta: float) -> void:
 			trails[i][trail_head] = pos[i]
 
 
+func light_sources() -> Array:
+	var out: Array = []
+	var unit := L.size.y
+	for i in 7:
+		var e: float = A.bands7[i]
+		out.append([L.size * 0.5 + pos[i] * unit, Color(L.color(i), (0.45 + 0.7 * e + 0.4 * flash[i]) * L.p("size", 1.0))])
+	return out
+
+
 func draw() -> void:
 	var unit := L.size.y
 	var center := L.size * 0.5

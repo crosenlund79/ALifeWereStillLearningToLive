@@ -32,6 +32,12 @@ Drop MP3/OGG/WAV files into `music/` and PNG/JPG files into `backgrounds/`, then
 Missing folders are created automatically. `settings.cfg` is plain text: one section per
 song filename (`background`, `color`) plus `[_app]` for EQ, sensitivity, volume, shuffle and repeat.
 
+## Dancing companions
+
+An optional dancer (`vis/dancer.gd`) is drawn between the visualizers and the UI, lit by the
+visualizers' own lights (each renderer can report `light_sources()`; `vis/dancer_light.gdshader`
+adds colour fill and rim light). Built-in: Lumen and Pip; add sprite dancers in `dancers/`.
+
 ## Visualizing Spotify and other apps (Windows)
 
 Settings → Audio source → System audio. `TinserBoxMedia.exe` captures the default output

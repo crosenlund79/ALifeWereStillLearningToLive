@@ -42,6 +42,17 @@ func _energy(i: int, n: int) -> float:
 	return e / (b1 - b0)
 
 
+func light_sources() -> Array:
+	var n := clampi(int(L.p("count", 1)), 1, 7)
+	var h := L.size.y
+	var out: Array = []
+	for i in n:
+		var e: float = _energy(i, n) if n > 1 else A.loudness
+		var y := h * 0.5 + (i - (n - 1) * 0.5) * (h * 0.6 / n) if n > 1 else h * 0.5
+		out.append([Vector2(L.size.x * (0.3 if i % 2 == 0 else 0.7), y), Color(L.color(i), 0.3 + 0.9 * e)])
+	return out
+
+
 func draw() -> void:
 	var n := clampi(int(L.p("count", 1)), 1, 7)
 	var thick: float = L.p("thickness", 1.0)

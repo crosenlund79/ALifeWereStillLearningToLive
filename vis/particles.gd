@@ -137,6 +137,15 @@ func update(delta: float) -> void:
 		pz[i] = z
 
 
+func light_sources() -> Array:
+	var c := L.size * 0.5
+	var out: Array = [[c, Color(L.primary, 0.5 + breath + 0.3 * A.beat_light)]]
+	for k in 4:
+		var a := yaw * 2.0 + k * TAU / 4.0
+		out.append([c + Vector2(cos(a) * L.size.x * 0.35, sin(a) * L.size.y * 0.2), Color(L.color(k), 0.25 + 0.5 * A.loudness)])
+	return out
+
+
 func draw() -> void:
 	var size := L.size
 	var center := size * 0.5

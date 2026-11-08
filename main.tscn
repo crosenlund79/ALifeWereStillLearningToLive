@@ -1,10 +1,11 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://audio_reactive.gd" id="1"]
 [ext_resource type="Script" path="res://vis/background.gd" id="2"]
 [ext_resource type="Script" path="res://music.gd" id="3"]
 [ext_resource type="Script" path="res://director.gd" id="4"]
 [ext_resource type="Script" path="res://ui.gd" id="5"]
+[ext_resource type="Script" path="res://vis/dancer.gd" id="6"]
 
 [node name="Main" type="Control"]
 layout_mode = 3
@@ -36,6 +37,16 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
+
+[node name="Dancer" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("6")
 
 [node name="Music" type="AudioStreamPlayer" parent="."]
 script = ExtResource("3")

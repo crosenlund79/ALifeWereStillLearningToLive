@@ -21,6 +21,7 @@ const SONG_KEYS := ["preset_mode", "preset", "color", "color2", "sensitivity", "
 @onready var audio: Node = $"../Audio"
 @onready var background: ColorRect = $"../Background"
 @onready var visuals: Control = $"../Visuals"
+@onready var dancer: Control = $"../Dancer"
 @onready var music: AudioStreamPlayer = $"../Music"
 @onready var ui: Control = $"../UI"
 
@@ -36,6 +37,9 @@ var mods_target := mods.duplicate()
 var color_a := Color(1.0, 0.82, 0.45)
 var color_b := Color(0.8, 0.5, 0.32)
 var palette: Array = []  # 7 element colours on screen (blending toward the target)
+const DANCER_LIGHTS := 10
+var _light_pos := PackedVector2Array()
+var _light_col := PackedColorArray()
 var _tween: Tween
 var _auto_timer := 0.0
 var _cursor_idle := 0.0
@@ -67,6 +71,7 @@ func _ready() -> void:
 		visuals.add_child(layer)
 		layers[role] = layer
 
+	_setup_dancer()
 	_build_hud()
 	music.track_changed.connect(_on_track_changed)
 	music.notice.connect(show_toast)
@@ -335,6 +340,7 @@ func _process(delta: float) -> void:
 		rec_label.text = "%s REC %d:%02d%s" % [dot, secs / 60, secs % 60, "" if music.rec_format == "" else "  " + music.rec_format.to_upper()]
 		rec_label.reset_size()
 		rec_label.position.x = hud.size.x - rec_label.size.x - 24
+	_update_dancer_lights(delta)
 	_update_cursor(delta)
 	if diag.visible:
 		_diag_timer += delta
@@ -376,6 +382,66 @@ func _unhandled_input(event: InputEvent) -> void:
 		if i < names.size():
 			preview(names[i])
 			show_toast("Preset: " + names[i])
+
+
+# --- Dancing companion ---------------------------------------------------------------------
+
+const DANCERS_README := """TinserBox dancing companions
+============================
+Put each dancer in its own folder here, e.g. dancers/Robot/, containing transparent PNG
+frames (played in filename order: frame01.png, frame02.png, ...) or a single PNG.
+Optional dancers/Robot/dancer.cfg:
+
+[dancer]
+fps=12          ; frames per second at about 120 BPM
+beat_sync=true  ; follow the music's tempo
+scale=1.0       ; size relative to the default
+
+Restart TinserBox, then pick the dancer in the Visualizer tab.
+"""
+
+
+func _setup_dancer() -> void:
+	dancer.audio = audio
+	dancer.dancers_dir = music.base_dir.path_join("dancers")
+	DirAccess.make_dir_recursive_absolute(dancer.dancers_dir)
+	var readme: String = dancer.dancers_dir.path_join("README.txt")
+	if not FileAccess.file_exists(readme):
+		var f := FileAccess.open(readme, FileAccess.WRITE)
+		if f:
+			f.store_string(DANCERS_README)
+	_light_pos.resize(DANCER_LIGHTS)
+	_light_col.resize(DANCER_LIGHTS)
+	apply_dancer_settings()
+
+
+## Dancer settings are app-wide and independent of the visualizer preset.
+func apply_dancer_settings() -> void:
+	dancer.enabled = music.app_setting("dancer_enabled", false)
+	dancer.light_strength = float(music.app_setting("dancer_light", 60.0)) / 100.0
+	dancer.size_mul = float(music.app_setting("dancer_size", 1.0))
+	dancer.set_character(str(music.app_setting("dancer_character", "Lumen")))
+
+
+## The visualizers' own lights (main up to 7, second layer up to 3), smoothed so the
+## dancer's lighting glides instead of flickering.
+func _update_dancer_lights(delta: float) -> void:
+	if not dancer.enabled:
+		return
+	var src: Array = layers.main.light_sources().slice(0, 7) + layers.secondary.light_sources().slice(0, 3)
+	if src.is_empty():
+		# No visualizer: a soft fill from the palette, following the music.
+		var s := visuals.size if visuals.size.x > 0.0 else Vector2(800, 600)
+		for k in 3:
+			src.append([Vector2(s.x * (0.15 + 0.35 * k), s.y * 0.35), Color(palette[k * 3] if palette.size() == 7 else color_a, 0.2 + 0.4 * audio.loudness)])
+	var rate := 1.0 - exp(-6.0 * delta)
+	for i in DANCER_LIGHTS:
+		if i < src.size():
+			_light_pos[i] = _light_pos[i].lerp(src[i][0], rate) if _light_col[i].a > 0.01 else src[i][0]
+			_light_col[i] = _light_col[i].lerp(src[i][1], rate)
+		else:
+			_light_col[i] = _light_col[i].lerp(Color(_light_col[i], 0.0), rate)
+	dancer.set_lights(_light_pos, _light_col, DANCER_LIGHTS)
 
 
 # --- HUD: notifications, toasts, diagnostics ----------------------------------------

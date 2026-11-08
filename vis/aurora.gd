@@ -23,6 +23,7 @@ var edge := PackedVector2Array()
 var edge_colors := PackedColorArray()
 var t := 0.0
 var flare := 0.0
+var lights: Array = []  # Recorded while drawing: points on the ribbons' glowing edges.
 
 
 func _init(layer: Control, _mode: String) -> void:
@@ -53,6 +54,10 @@ func _allocate() -> void:
 			indices.append_array([a, b, c, a, c, d])
 
 
+func light_sources() -> Array:
+	return lights.slice(0, 7)
+
+
 func element_count() -> int:
 	return ribbons * samples
 
@@ -73,6 +78,7 @@ func draw() -> void:
 	var h := L.size.y
 	var ci := L.get_canvas_item()
 	var calm: float = 1.0 - A.silence_amount * 0.6
+	lights.clear()
 	for i in ribbons:
 		var depth := float(i) / maxf(ribbons - 1, 1)  # 0 = far, 1 = near
 		var base_y := h * (0.30 + 0.24 * depth)
@@ -103,6 +109,8 @@ func draw() -> void:
 			points[3 * samples + s] = Vector2(x, top)
 			colors[3 * samples + s] = Color(col.lerp(L.secondary, 0.4), 0.0)
 			edge[s] = Vector2(x, y)
+			if s == samples / 4 or s == samples * 3 / 4:
+				lights.append([Vector2(x, y), Color(col, clampf(alpha * 2.2 + flare * 0.5, 0.0, 1.5))])
 			edge_colors[s] = Color(col.lightened(0.5), clampf(flare * 0.7 * (0.4 + 0.6 * depth) * L.glow, 0.0, 0.9))
 		RenderingServer.canvas_item_add_triangle_array(ci, indices, points, colors)
 		if flare > 0.05:

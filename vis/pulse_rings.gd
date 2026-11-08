@@ -78,6 +78,17 @@ func _ring(center: Vector2, radius: float, squash: float, distort: float, phase:
 	L.draw_polyline(buf, Color(col.lightened(0.35), alpha), maxf(thick * 1.2, 1.0), true)
 
 
+func light_sources() -> Array:
+	var n := clampi(int(L.p("count", 6)), 2, 9)
+	var big := minf(L.size.x, L.size.y) * 0.46
+	var out: Array = []
+	for i in mini(n, 7):
+		var f := float(i) / (n - 1)
+		var a := i * 2.4 + t * 0.2
+		out.append([L.size * 0.5 + Vector2(cos(a), sin(a) * (1.0 - tilt)) * big * (0.14 + 0.82 * f), Color(L.color(i), 0.3 + 0.9 * level[i])])
+	return out
+
+
 func draw() -> void:
 	var n := clampi(int(L.p("count", 6)), 2, 9)
 	var thick: float = L.p("thickness", 1.0) * L.size.y / 941.0 * 1.6

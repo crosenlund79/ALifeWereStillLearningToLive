@@ -9,6 +9,8 @@ Installed version (TinserBox_Setup_Win64.exe):   Documents\TinserBox
   music\          your songs (MP3, OGG, WAV 8/16-bit)
   backgrounds\    background images (PNG, JPG)
   screenshots\    saved screenshots (folder can be changed in Settings)
+  dancers\        your own dancing companions (PNG frames; see README.txt inside)
+  recordings\     recorded system audio (folder can be changed in Settings)
   settings.cfg    settings, playlist state and per-song looks (plain text)
   presets.json    your own and edited visualizer presets (plain text, schema 1)
 
@@ -70,6 +72,14 @@ and artist come from Windows' media controls, so the song pop-up, per-song
 looks (section "Artist - Title" in settings.cfg) and automatic atmosphere
 work for those songs too. Visuals lag the sound by roughly 0.1 s. Click a
 song in the playlist (or choose TinserBox player) to return.
+
+DANCING COMPANIONS
+------------------
+Visualizer tab > Dancing companion: switch a dancer on, pick a character and set
+how strongly the visualizer's light colours it (0-100%). The dancer stands in front
+of any visualizer, or alone (Visualizer: None), and is independent of presets.
+Built in: Lumen and Pip. Add your own in dancers\ (next to music\): one folder per
+dancer with transparent PNG frames, or a single PNG; see dancers\README.txt.
 
 RECORDING (Windows)
 -------------------

@@ -261,9 +261,13 @@ func _build_studio_tab(tabs: TabContainer) -> void:
 	_button(row3, "Restore built-ins", func(): director.restore_builtins(), "Bring back the original built-in presets")
 
 	var modes := Layer.MODE_NAMES
+	_build_dancer_section(col)
+
 	_section(col, "Main layer")
 	var g := _grid4(col)
-	_studio_option(g, "Visualizer", "main", "mode", modes)
+	var main_modes := {"none": "None (dancer only)"}
+	main_modes.merge(modes)
+	_studio_option(g, "Visualizer", "main", "mode", main_modes)
 	_studio_slider(g, "Opacity", "main", "opacity", 0.0, 1.0)
 	_studio_slider(g, "Scale", "main", "scale", 0.5, 1.5)
 	_studio_slider(g, "Intensity", "main", "intensity", 0.0, 2.0)
@@ -337,6 +341,44 @@ func _build_studio_tab(tabs: TabContainer) -> void:
 		audio.adaptive = on
 		music.set_app_setting("adaptive", on))
 	_fill(g, adaptive)
+
+
+## Dancing companion: independent of the visualizer and its presets (saved app-wide).
+func _build_dancer_section(col: VBoxContainer) -> void:
+	_section(col, "Dancing companion")
+	var g := _grid4(col)
+	_label(g, "Dancer")
+	var on := CheckButton.new()
+	on.button_pressed = music.app_setting("dancer_enabled", false)
+	on.tooltip_text = "Show a dancing companion in front of the visualizer (or alone, with Visualizer: None)"
+	on.toggled.connect(func(v: bool):
+		music.set_app_setting("dancer_enabled", v)
+		director.apply_dancer_settings())
+	_fill(g, on)
+	_label(g, "Character")
+	var pick := OptionButton.new()
+	var names: Array = director.dancer.list_characters()
+	for n in names:
+		pick.add_item(n)
+	pick.select(maxi(names.find(str(music.app_setting("dancer_character", "Lumen"))), 0))
+	pick.tooltip_text = "Built-in companions, plus any dancers you put in the dancers folder (see README.txt there)"
+	pick.item_selected.connect(func(i: int):
+		music.set_app_setting("dancer_character", pick.get_item_text(i))
+		director.apply_dancer_settings())
+	_fill(g, pick)
+	_label(g, "Lighting")
+	var light := _slider(float(music.app_setting("dancer_light", 60.0)), 100.0, func(v: float):
+		music.set_app_setting("dancer_light", v)
+		director.dancer.light_strength = v / 100.0)
+	light.tooltip_text = "How strongly the visualizer's colours light the dancer (0-100%)"
+	_fill(g, light)
+	_label(g, "Size")
+	var dsize := _slider(float(music.app_setting("dancer_size", 1.0)), 1.6, func(v: float):
+		music.set_app_setting("dancer_size", v)
+		director.dancer.size_mul = v)
+	dsize.min_value = 0.5
+	dsize.step = 0.05
+	_fill(g, dsize)
 
 
 func _build_eq_tab(tabs: TabContainer) -> void:

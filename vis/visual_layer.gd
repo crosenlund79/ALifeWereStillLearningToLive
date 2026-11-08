@@ -109,6 +109,25 @@ func _draw() -> void:
 	renderer.draw()
 
 
+## Lights this layer casts on the dancing companion: [position (screen), colour with
+## alpha = intensity]. Renderers can report their own (spirits, aurora, ...); otherwise the
+## palette colours are placed across the screen from bass (left) to treble (right) at the
+## actual band energies. Scaled by this layer's opacity and glow.
+func light_sources() -> Array:
+	if renderer == null or opacity <= 0.01:
+		return []
+	var out: Array = []
+	if renderer.has_method("light_sources"):
+		out = renderer.light_sources()
+	else:
+		for i in 7:
+			out.append([Vector2(size.x * (i + 0.5) / 7.0, size.y * 0.5), Color(color(i), float(audio.bands7[i]) * 0.9)])
+	var k := opacity * clampf(glow, 0.0, 1.5)
+	for l in out:
+		l[1].a *= k
+	return out
+
+
 ## Number of live particles/entities, for the diagnostics overlay.
 func element_count() -> int:
 	return renderer.element_count() if renderer and renderer.has_method("element_count") else 0
