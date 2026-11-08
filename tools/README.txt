@@ -51,6 +51,8 @@ KEYBOARD (when TinserBox is focused)
   1-9          Choose preset          [ / ]       Previous / next preset
   F12          Screenshot (key configurable: screenshot_key in settings.cfg)
   F3           Diagnostics            Ctrl+Q      Quit
+  Ctrl+M       Mini player: small, borderless, always on top (drag it anywhere;
+               Ctrl+M again restores the window). Always off at launch.
 
 VISUALIZE SPOTIFY AND OTHER APPS (Windows)
 ------------------------------------------

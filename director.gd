@@ -315,7 +315,7 @@ func _process(delta: float) -> void:
 	bl.primary = color_a
 
 	# The pop-up is for when the panel is hidden; the panel shows the title itself.
-	notify_box.visible = not ui.overlay.visible
+	notify_box.visible = not ui.overlay.visible and not ui.mini
 	_update_cursor(delta)
 	if diag.visible:
 		_diag_timer += delta
@@ -327,7 +327,7 @@ func _process(delta: float) -> void:
 func _update_cursor(delta: float) -> void:
 	# Hide the pointer while the interface is hidden and the mouse is still.
 	_cursor_idle += delta
-	var should_hide: bool = not ui.overlay.visible and _cursor_idle > 2.0
+	var should_hide: bool = not ui.overlay.visible and not ui.mini_panel.visible and _cursor_idle > 2.0
 	var want := Input.MOUSE_MODE_HIDDEN if should_hide else Input.MOUSE_MODE_VISIBLE
 	if Input.mouse_mode != want:
 		Input.mouse_mode = want
@@ -427,7 +427,7 @@ func show_toast(text: String) -> void:
 	toast.text = text
 	toast.reset_size()
 	# Above the transport bar while the panel is open.
-	toast.position = hud.size - toast.size - Vector2(28, 84 if ui.overlay.visible else 24)
+	toast.position = hud.size - toast.size - Vector2(28, 84 if ui.overlay.visible or ui.mini else 24)
 	if _toast_tween:
 		_toast_tween.kill()
 	_toast_tween = create_tween()

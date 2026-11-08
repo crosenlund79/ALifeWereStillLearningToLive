@@ -34,7 +34,18 @@ var context_row := -1
 var add_to_menu := PopupMenu.new()
 var playlist_select := OptionButton.new()
 var playlist_name_edit := LineEdit.new()
-var pending_play := -1  # Row clicked; plays on release unless it turns into a drag.
+var pending_play := -1
+# Mini player (Ctrl+M): compact, borderless, always on top. Never restored at launch.
+const MINI_SIZE := Vector2i(400, 300)
+var mini := false
+var mini_panel := PanelContainer.new()
+var mini_title := Label.new()
+var mini_controls := HBoxContainer.new()
+var mini_buttons: Array[Button] = []
+var mini_volume: HSlider
+var _saved_window := {}
+var _drag_from := Vector2i(-1, -1)
+var _drag_window := Vector2i.ZERO  # Row clicked; plays on release unless it turns into a drag.
 var scroll_toggle := CheckButton.new()
 var background_select := OptionButton.new()
 var color_button := ColorPickerButton.new()
@@ -108,6 +119,7 @@ func _ready() -> void:
 	title.add_theme_font_override("font", BOLD_FONT)
 	box.add_child(title)
 	_build_transport(box)
+	_build_mini()
 
 	add_child(context_menu)
 	context_menu.add_item("Play now", 0)
@@ -449,7 +461,7 @@ func _build_settings_tab(tabs: TabContainer) -> void:
 		"Space play/pause · Enter restart in 2 s · Left/Right seek",
 		"Up/Down volume · M mute · N/P next/previous · S shuffle",
 		"R repeat · F fullscreen · Esc show/hide · H hide until H",
-		"1-9 presets · [ ] previous/next preset · Ctrl+Q quit",
+		"1-9 presets · [ ] previous/next preset · Ctrl+M mini player · Ctrl+Q quit",
 		"%s screenshot · F3 diagnostics" % music.app_setting("screenshot_key", "F12"),
 	])
 	col.add_child(help)
@@ -509,6 +521,9 @@ func _build_transport(box: VBoxContainer) -> void:
 func toggle_hide_mode() -> void:
 	hide_mode = not hide_mode
 	music.set_app_setting("hide_mode", hide_mode)
+	if mini:
+		mini_panel.modulate.a = 0.0 if hide_mode else 1.0
+		mini_panel.visible = not hide_mode
 	idle = 0.0
 	hidden_by_user = false
 	overlay.modulate.a = 0.0 if hide_mode else 1.0
@@ -516,6 +531,12 @@ func toggle_hide_mode() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_M and event.ctrl_pressed:
+		toggle_mini()
+		get_viewport().set_input_as_handled()
+		return
+	if mini and _mini_input(event):
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed and pending_play >= 0:
 		var row := pending_play
 		pending_play = -1
@@ -549,7 +570,7 @@ func _input(event: InputEvent) -> void:
 		return
 	# Only real activity counts: synthetic zero-distance motion (tooltips, window events) does not.
 	var moved: bool = event is InputEventMouseMotion and event.relative.length() > 0.5
-	if moved or event is InputEventMouseButton or (event is InputEventKey and event.pressed):
+	if not mini and (moved or event is InputEventMouseButton or (event is InputEventKey and event.pressed)):
 		hidden_by_user = false
 		idle = 0.0
 		overlay.modulate.a = 1.0
@@ -564,6 +585,18 @@ func _process(delta: float) -> void:
 	if file_dialog.visible or context_menu.visible:
 		idle = 0.0
 	var target := 1.0 if not hide_mode and not hidden_by_user and (lock_button.button_pressed or idle < IDLE_TIME) else 0.0
+	if mini:
+		# The mini bar uses the same fade; the full overlay stays hidden.
+		mini_panel.modulate.a = move_toward(mini_panel.modulate.a, target, delta / FADE_TIME)
+		mini_panel.visible = mini_panel.modulate.a > 0.0
+		overlay.visible = false
+		scroll_title.visible = false
+		for b in mini_buttons:
+			b.queue_redraw()
+		syncing = true
+		mini_volume.value = 0.0 if music.muted else music.volume * 100.0
+		syncing = false
+		return
 	overlay.modulate.a = move_toward(overlay.modulate.a, target, delta / FADE_TIME)
 	overlay.visible = overlay.modulate.a > 0.0
 	_update_frame()
@@ -742,6 +775,7 @@ func _on_track_changed(_index: int) -> void:
 		title.text = "NO TRACKS IN MUSIC/"
 		return
 	title.text = music.display_name(music.current_path).to_upper()
+	mini_title.text = title.text
 	scroll_title.text = title.text
 	scroll_title.reset_size()
 	scroll_title.position.x = size.x
@@ -794,6 +828,107 @@ func _fill_preset_list(select: OptionButton, selected: String) -> void:
 	for i in names.size():
 		if names[i] == selected:
 			select.select(i)
+
+
+# --- Mini player --------------------------------------------------------------------
+
+func _build_mini() -> void:
+	mini_panel.set_anchors_and_offsets_preset(PRESET_BOTTOM_WIDE)
+	mini_panel.grow_vertical = GROW_DIRECTION_BEGIN
+	mini_panel.visible = false
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.03, 0.05, 0.04, 0.72)
+	sb.border_color = Color(GOLD, 0.2)
+	sb.border_width_top = 1
+	sb.content_margin_left = 10
+	sb.content_margin_right = 10
+	sb.content_margin_top = 6
+	sb.content_margin_bottom = 8
+	mini_panel.add_theme_stylebox_override("panel", sb)
+	add_child(mini_panel)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 4)
+	mini_panel.add_child(col)
+	mini_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mini_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	mini_title.add_theme_font_override("font", BOLD_FONT)
+	mini_title.add_theme_font_size_override("font_size", 13)
+	mini_title.mouse_filter = MOUSE_FILTER_IGNORE
+	col.add_child(mini_title)
+	mini_controls.add_theme_constant_override("separation", 4)
+	mini_controls.alignment = BoxContainer.ALIGNMENT_CENTER
+	col.add_child(mini_controls)
+	mini_buttons.append(_icon_button(mini_controls, "prev", music.previous_track, "Previous track (P)"))
+	mini_buttons.append(_icon_button(mini_controls, "play", music.toggle_pause, "Play / Pause (Space)"))
+	mini_buttons.append(_icon_button(mini_controls, "next", music.next_track, "Next track (N)"))
+	var gap := Control.new()
+	gap.custom_minimum_size.x = 14
+	mini_controls.add_child(gap)
+	mini_buttons.append(_icon_button(mini_controls, "speaker", music.toggle_mute, "Mute / Unmute (M)"))
+	mini_volume = _slider(music.volume * 100.0, 100.0, _on_volume)
+	mini_volume.custom_minimum_size.x = 100
+	mini_volume.tooltip_text = "Volume (Up / Down)"
+	mini_controls.add_child(mini_volume)
+	mini_buttons.append(_icon_button(mini_controls, "mini_exit", toggle_mini, "Back to the full player (Ctrl+M)"))
+
+
+## Ctrl+M: playback, visuals and EQ continue untouched; only the window changes.
+func toggle_mini() -> void:
+	var window := get_window()
+	if not mini:
+		_saved_window = {
+			"mode": window.mode, "position": window.position, "size": window.size,
+			"borderless": window.borderless, "on_top": window.always_on_top, "min_size": window.min_size,
+		}
+		mini = true
+		frame_hidden = false
+		if window.mode != Window.MODE_WINDOWED:
+			window.mode = Window.MODE_WINDOWED
+		window.min_size = MINI_SIZE
+		window.borderless = true
+		window.always_on_top = true
+		window.size = MINI_SIZE
+		overlay.visible = false
+		mini_panel.visible = true
+		mini_panel.modulate.a = 1.0
+		idle = 0.0
+	else:
+		mini = false
+		mini_panel.visible = false
+		window.always_on_top = _saved_window.get("on_top", false)
+		window.borderless = _saved_window.get("borderless", false)
+		window.min_size = _saved_window.get("min_size", Vector2i(800, 600))
+		window.size = _saved_window.get("size", Vector2i(1672, 941))
+		window.position = _saved_window.get("position", window.position)
+		window.mode = _saved_window.get("mode", Window.MODE_WINDOWED)
+		overlay.visible = true
+		overlay.modulate.a = 1.0
+		idle = 0.0
+
+
+## Mini mode input: drag the window by any area outside the controls; F leaves mini mode
+## and goes fullscreen. Returns true when the event was used.
+func _mini_input(event: InputEvent) -> bool:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F and not event.ctrl_pressed:
+		toggle_mini()
+		music.toggle_fullscreen()
+		get_viewport().set_input_as_handled()
+		return true
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		if event.pressed and not (mini_panel.visible and mini_controls.get_global_rect().has_point(event.position)):
+			_drag_from = DisplayServer.mouse_get_position()
+			_drag_window = get_window().position
+		elif not event.pressed:
+			_drag_from = Vector2i(-1, -1)
+	elif event is InputEventMouseMotion and _drag_from.x >= 0:
+		get_window().position = _drag_window + DisplayServer.mouse_get_position() - _drag_from
+	if event is InputEventMouseMotion and event.relative.length() > 0.5 or event is InputEventMouseButton or (event is InputEventKey and event.pressed):
+		if not hide_mode:
+			hidden_by_user = false
+			idle = 0.0
+			mini_panel.modulate.a = 1.0
+			mini_panel.visible = true
+	return false
 
 
 func _update_source_ui() -> void:
@@ -1122,6 +1257,12 @@ func _draw_icon(b: Button, kind: String) -> void:
 			b.draw_circle(c + Vector2(-2, 0), 2.2, col)
 			b.draw_line(c + Vector2(-9, 6), c + Vector2(5, -6), col, 1.8, true)
 			b.draw_string(BOLD_FONT, c + Vector2(8, 10), "H", HORIZONTAL_ALIGNMENT_LEFT, -1, 9, col)
+		"mini_exit":
+			# Two corners pointing outward: back to the full player.
+			_line(b, c, [Vector2(-8, -2), Vector2(-8, -8), Vector2(-2, -8)], col)
+			_line(b, c, [Vector2(8, 2), Vector2(8, 8), Vector2(2, 8)], col)
+			b.draw_line(c + Vector2(-8, -8), c + Vector2(-3, -3), col, 2.0, true)
+			b.draw_line(c + Vector2(8, 8), c + Vector2(3, 3), col, 2.0, true)
 		"quit":
 			var qc := Color(1.0, 0.62, 0.45)
 			b.draw_arc(c + Vector2(0, 1), 7.0, deg_to_rad(-55.0), deg_to_rad(235.0), 20, qc, 2.0, true)

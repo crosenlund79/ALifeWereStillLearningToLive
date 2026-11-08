@@ -43,7 +43,7 @@ those songs (`settings.cfg` section `Artist - Title`).
 Space play/pause · Enter restart after 2 s · Left/Right seek 5 s · Up/Down volume · M mute ·
 N/P next/previous · S shuffle · R repeat (off/all/one) · F fullscreen · Esc show/hide interface ·
 H hide interface until H again · 1-9 presets · [ ] previous/next preset · F12 screenshot ·
-F3 diagnostics · Ctrl+Q quit.
+F3 diagnostics · Ctrl+M mini player · Ctrl+Q quit.
 Hardware media keys (Play/Pause, Next, Previous, Stop) go through Windows' media controls
 via `TinserBoxMedia.exe` (`tools/media_keys/`), so they also work in the background.
 
