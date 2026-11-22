@@ -13,7 +13,8 @@ extends Control
 
 const Figure := preload("res://vis/dancer_figure.gd")
 const SHADER := preload("res://vis/dancer_light.gdshader")
-const BUILTIN := ["Lumen", "Pip"]
+const BUILTIN := ["Aria"]  # The built-in illustrated companion (see dancer_figure.gd).
+const PERSONALITIES := ["shy", "playful", "energetic", "elegant", "clumsy"]
 const MAX_FRAMES := 240
 
 var audio: Node
@@ -21,6 +22,7 @@ var dancers_dir := ""
 var enabled := false
 var character := ""
 var light_strength := 0.6
+var personality := "playful"
 var size_mul := 1.0
 var rect := TextureRect.new()
 var mat := ShaderMaterial.new()
@@ -120,15 +122,17 @@ func _process(delta: float) -> void:
 	bounce = maxf(bounce - delta * 4.0, audio.beat * energy)
 	sway = lerpf(sway, audio.mid * energy, 1.0 - exp(-3.0 * delta))
 	if procedural:
+		figure.personality = personality
 		figure.update_pose(delta, audio)
 	else:
-		var rate: float = (audio.tempo_bpm / 120.0 if beat_sync and audio.tempo_bpm > 60.0 else 0.6 + 0.6 * audio.loudness) * energy
+		var lively: float = {"shy": 0.7, "elegant": 0.85, "energetic": 1.25}.get(personality, 1.0)
+		var rate: float = (audio.tempo_bpm / 120.0 if beat_sync and audio.tempo_bpm > 60.0 else 0.6 + 0.6 * audio.loudness) * energy * lively
 		frame_pos += delta * fps * rate
 		rect.texture = frames[int(frame_pos) % frames.size()]
 
 	# Bottom-centre, scaled with the window (works at 800x600 and in the mini player).
 	var tex_size := rect.texture.get_size()
-	var h := size.y * 0.5 * size_mul * sprite_scale
+	var h := size.y * (0.6 if procedural else 0.5) * size_mul * sprite_scale
 	var w := h * tex_size.x / maxf(tex_size.y, 1.0)
 	rect.size = Vector2(w, h)
 	rect.pivot_offset = Vector2(w * 0.5, h)

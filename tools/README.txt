@@ -11,18 +11,41 @@ Installed version (TinserBox_Setup_Win64.exe):   Documents\TinserBox
   screenshots\    saved screenshots (folder can be changed in Settings)
   dancers\        your own dancing companions (PNG frames; see README.txt inside)
   recordings\     recorded system audio (folder can be changed in Settings)
-  settings.cfg    settings, playlist state and per-song looks (plain text)
+  moods.json      your moods: songs, order and look (plain text, schema 1)
+  settings.cfg    settings and older per-song looks (plain text)
   presets.json    your own and edited visualizer presets (plain text, schema 1)
 
 The installed version copies the bundled songs into Documents\TinserBox on
 first launch. Updating or uninstalling never touches that folder.
 Add songs by copying them into music\, by "+ Folder" / "+ Files" in the
-Playlist tab, or by dragging files and folders onto the window.
-"Remove from playlist" never deletes files.
+Moods tab, or by dragging files and folders onto the window.
+"Remove" never deletes files.
 
-PER-SONG SETTINGS (settings.cfg)
---------------------------------
-Each song has a section named after its filename, for example:
+MOODS
+-----
+Moods replace playlists. All Music is the permanent library; a mood is a set of
+songs plus a look: visualizer presets, colours, backgrounds, sensitivity,
+intensity, background motion and an optional dancing companion.
+  Moods tab   Click a mood to browse it (the playing song keeps playing).
+              Double-click it, or "Play this mood", to start it.
+              New / Rename / Delete (deleting never removes songs).
+              Drag songs (Ctrl/Shift-click for several) onto a mood to add
+              them; drag within a mood to reorder; drag moods to reorder them.
+              Right-click songs > Moods: tick or untick moods (a song can be
+              in several). Shuffle, Repeat and Next/Previous stay in the mood.
+  Mood Look   Presets of the mood. Auto variation (default) picks a different
+              preset for each song, never mid-song; Fixed always uses one.
+              Backgrounds rotate per song. Colours apply to every preset (or
+              let each preset use its own). Dancer: None keeps it off.
+              "Save current look to this mood" stores what you see as a new
+              preset of the mood. Changing the Visualizer tab is a temporary
+              override until you save it to the mood.
+Your old playlists became moods automatically (names, songs and order kept);
+playlists.json is left untouched. Missing songs stay listed and are skipped.
+
+OLDER PER-SONG SETTINGS (settings.cfg)
+--------------------------------------
+Songs played from All Music still use these. Each song has a section named after its filename, for example:
   [My Song.mp3]
   background="forest.jpg"        image in backgrounds\
   color=Color(1, 0.8, 0.4, 1)     main colour
@@ -38,8 +61,8 @@ Visualizers: Multi-Waveform (1-7 lines), Square Grid, Retro Spectrum, The Aurora
 Particle Universe, Resonance Engine, The Seven Spirits, Harmonic Ribbons,
 Pulse Rings, Northern Lights. Each has its own settings in the Visualizer tab, and
 every visualizer takes its colours from the preset's main/second colours and seven
-element colours (Reset colours restores them; "Save colours for this song" keeps
-them for one song).
+element colours (Reset colours restores them; "Use for this mood" keeps them for
+the mood selected in the Moods tab).
 Built-in presets: Midnight Aurora, Stellar Drift, Clockwork Heart, Seven Souls,
 Neon Pulse, Almost Nothing, Silk Harmonics, Echo Chamber, Polar Night,
 Golden Thread (the original look).
@@ -71,14 +94,16 @@ Control playback in that app (media keys go to it). The current song's title
 and artist come from Windows' media controls, so the song pop-up, per-song
 looks (section "Artist - Title" in settings.cfg) and automatic atmosphere
 work for those songs too. Visuals lag the sound by roughly 0.1 s. Click a
-song in the playlist (or choose TinserBox player) to return.
+song in the Moods tab (or choose TinserBox player) to return.
 
 DANCING COMPANIONS
 ------------------
-Visualizer tab > Dancing companion: switch a dancer on, pick a character and set
-how strongly the visualizer's light colours it (0-100%). The dancer stands in front
-of any visualizer, or alone (Visualizer: None), and is independent of presets.
-Built in: Lumen and Pip. Add your own in dancers\ (next to music\): one folder per
+A mood chooses its dancer and personality in Mood Look (None = off). For All Music,
+Visualizer tab > Dancing companion: switch a dancer on, pick a character and
+personality, and set how strongly the visualizer's light colours it (0-100%).
+Built in: Aria, an illustrated dancer with short choreographed moves that follow
+the tempo and energy (gentle in quiet passages). Personalities: shy, playful,
+energetic, elegant, clumsy. Add your own in dancers\ (next to music\): one folder per
 dancer with transparent PNG frames, or a single PNG; see dancers\README.txt.
 
 RECORDING (Windows)
@@ -89,7 +114,7 @@ Windows' built-in encoder; if that encoder is unavailable the recording is saved
 as WAV instead, and TinserBox tells you which. Default name: date and time; type a
 name before starting, or use "Rename last" afterwards. Recordings go to
 recordings\ (changeable). Recording only starts when you press the button, and
-TinserBox can play the recordings back (add the folder to the playlist).
+TinserBox can play the recordings back (add the folder in the Moods tab).
 
 MEDIA KEYS
 ----------

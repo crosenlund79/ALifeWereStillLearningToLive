@@ -15,8 +15,9 @@ song or chosen automatically from how a song sounds.
 - `vis/visual_layer.gd` + renderers in `vis/` - custom-drawn visualizers reading that service.
 - `vis/background.gd` + `background.gdshader` - crossfading, Ken Burns, bloom, blur, procedural fallback.
 - `presets.gd` - built-in and user presets (`presets.json`, schema 1).
-- `director.gd` - applies presets, per-song looks and automatic atmosphere; screenshots, pop-ups, diagnostics.
-- `music.gd` - playlist, playback, settings, media keys. `ui.gd` - the overlay.
+- `director.gd` - applies presets, mood looks (auto variation per song), legacy per-song looks and automatic atmosphere; screenshots, pop-ups, diagnostics.
+- `music.gd` - library, moods (`moods.json`; old playlists migrate once), playback, settings, media keys.
+  `ui.gd` - the overlay (Moods, Mood Look, Visualizer, Equalizer, Settings).
 
 ## Where music, backgrounds and settings live
 
@@ -36,7 +37,8 @@ song filename (`background`, `color`) plus `[_app]` for EQ, sensitivity, volume,
 
 An optional dancer (`vis/dancer.gd`) is drawn between the visualizers and the UI, lit by the
 visualizers' own lights (each renderer can report `light_sources()`; `vis/dancer_light.gdshader`
-adds colour fill and rim light). Built-in: Lumen and Pip; add sprite dancers in `dancers/`.
+adds colour fill and rim light). Built-in: Aria (`vis/dancer_figure.gd`: bar-based choreography, springs, five personalities);
+moods pick the dancer and personality; add sprite dancers in `dancers/`.
 
 ## Visualizing Spotify and other apps (Windows)
 

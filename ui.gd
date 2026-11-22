@@ -1,5 +1,5 @@
 extends Control
-## TinserBox overlay: playlist, Visualizer Studio, equalizer, per-song settings and app
+## TinserBox overlay: moods (music + look), Visualizer Studio, equalizer, mood look and app
 ## settings, plus the transport bar. Fades after inactivity; Esc hides it until the next
 ## activity; H hides it until H is pressed again (saved).
 
@@ -32,10 +32,12 @@ var context_menu := PopupMenu.new()
 var file_dialog := FileDialog.new()
 var visible_rows: Array[int] = []
 var context_row := -1
-var add_to_menu := PopupMenu.new()
-var playlist_select := OptionButton.new()
-var playlist_name_edit := LineEdit.new()
-var pending_play := -1
+var mood_list := ItemList.new()
+var mood_name_edit := LineEdit.new()
+var moods_menu := PopupMenu.new()  # Checkable mood tags for the selected songs.
+var look_box: VBoxContainer
+var look_for := "\u0001"
+var _thumbs := {}
 # Mini player (Ctrl+M): compact, borderless, always on top. Never restored at launch.
 const MINI_SIZE := Vector2i(400, 300)
 var mini := false
@@ -46,20 +48,13 @@ var mini_buttons: Array[Button] = []
 var mini_volume: HSlider
 var _saved_window := {}
 var _drag_from := Vector2i(-1, -1)
-var _drag_window := Vector2i.ZERO  # Row clicked; plays on release unless it turns into a drag.
+var _drag_window := Vector2i.ZERO
 var scroll_toggle := CheckButton.new()
-var background_select := OptionButton.new()
-var color_button := ColorPickerButton.new()
-var color2_button := ColorPickerButton.new()
-var song_mode_select := OptionButton.new()
-var song_preset_select := OptionButton.new()
-var auto_label := Label.new()
 var preset_select := OptionButton.new()
 var preset_name_edit := LineEdit.new()
 var popups: Array[Popup] = []
 var eq_sliders: Array[VSlider] = []
 var eq_toggle := CheckButton.new()
-var backgrounds: Array[String] = []
 var studio_controls := {}  # "section/key" -> Control
 var mode_grid: GridContainer  # Settings specific to the main layer's visualizer.
 var mode_grid_for := ""
@@ -70,7 +65,6 @@ var rec_button: Button
 var rec_status := Label.new()
 var rec_name := LineEdit.new()
 var rec_dir_label := Label.new()
-var song_controls := {}  # key -> HSlider
 var play_button: Button
 var lock_button: Button
 var shuffle_button: Button
@@ -117,10 +111,10 @@ func _ready() -> void:
 	tabs.focus_mode = FOCUS_NONE
 	tabs.get_tab_bar().focus_mode = FOCUS_NONE
 	box.add_child(tabs)
-	_build_playlist_tab(tabs)
+	_build_moods_tab(tabs)
+	_build_mood_look_tab(tabs)
 	_build_studio_tab(tabs)
 	_build_eq_tab(tabs)
-	_build_song_tab(tabs)
 	_build_settings_tab(tabs)
 
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -135,11 +129,12 @@ func _ready() -> void:
 	context_menu.add_item("Play now", 0)
 	context_menu.add_item("Queue next", 1)
 	context_menu.add_item("Remove", 2)
-	add_to_menu.name = "AddTo"
-	add_to_menu.id_pressed.connect(func(id: int):
-		music.add_to_playlist(add_to_menu.get_item_text(id), [music.tracks[context_row]]))
-	context_menu.add_child(add_to_menu)
-	context_menu.add_submenu_item("Add to playlist", "AddTo", 3)
+	moods_menu.name = "Moods"
+	moods_menu.hide_on_checkable_item_selection = false
+	moods_menu.id_pressed.connect(_on_mood_tag)
+	context_menu.add_child(moods_menu)
+	context_menu.add_submenu_item("Moods", "Moods", 3)
+	context_menu.add_item("Clear queue", 4)
 	context_menu.id_pressed.connect(_on_context)
 	file_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	file_dialog.use_native_dialog = true
@@ -149,6 +144,7 @@ func _ready() -> void:
 
 	music.track_changed.connect(_on_track_changed)
 	music.playlist_changed.connect(_refresh_playlist)
+	music.moods_changed.connect(_refresh_moods)
 	director.preset_changed.connect(func(_n): _sync_studio())
 	director.working_changed.connect(_sync_studio)
 	music.source_changed.connect(_update_source_ui)
@@ -162,32 +158,51 @@ func _ready() -> void:
 
 # --- Tabs ---------------------------------------------------------------------------
 
-func _build_playlist_tab(tabs: TabContainer) -> void:
+## Moods: the mood list (left) and the songs of the browsed mood or All Music (right).
+func _build_moods_tab(tabs: TabContainer) -> void:
 	var tab := VBoxContainer.new()
-	tab.name = "Playlist"
+	tab.name = "Moods"
 	tab.add_theme_constant_override("separation", 8)
 	tabs.add_child(tab)
-	var lists := HBoxContainer.new()
-	lists.add_theme_constant_override("separation", 6)
-	tab.add_child(lists)
-	playlist_select.size_flags_horizontal = SIZE_EXPAND_FILL
-	playlist_select.focus_mode = FOCUS_NONE
-	playlist_select.tooltip_text = "Choose a playlist. The current song keeps playing; Next, Previous, Shuffle and Repeat use the chosen playlist."
-	playlist_select.item_selected.connect(func(i: int):
-		if not syncing:
-			music.set_active_playlist(playlist_select.get_item_text(i)))
-	popups.append(playlist_select.get_popup())
-	lists.add_child(playlist_select)
-	playlist_name_edit.placeholder_text = "Playlist name"
-	playlist_name_edit.custom_minimum_size.x = 170
-	lists.add_child(playlist_name_edit)
-	_button(lists, "New", _on_new_playlist, "Create a playlist with the name typed on the left")
-	_button(lists, "Rename", _on_rename_playlist, "Rename the selected playlist to the name typed on the left")
-	_button(lists, "Delete", _on_delete_playlist, "Delete the selected playlist (songs and files are kept)")
+	var split := HBoxContainer.new()
+	split.size_flags_vertical = SIZE_EXPAND_FILL
+	split.add_theme_constant_override("separation", 10)
+	tab.add_child(split)
 
+	var left := VBoxContainer.new()
+	left.custom_minimum_size.x = 215
+	left.add_theme_constant_override("separation", 6)
+	split.add_child(left)
+	mood_list.focus_mode = FOCUS_NONE
+	mood_list.size_flags_vertical = SIZE_EXPAND_FILL
+	mood_list.fixed_icon_size = Vector2i(34, 20)
+	mood_list.tooltip_text = "Click a mood to browse it (the playing song continues). Double-click, or Play this mood, to start it. Drop songs on a mood to add them; drag moods to reorder."
+	mood_list.item_selected.connect(func(i: int):
+		if not syncing:
+			music.set_active_mood(str(mood_list.get_item_metadata(i))))
+	mood_list.item_activated.connect(func(i: int):
+		music.set_active_mood(str(mood_list.get_item_metadata(i)))
+		music.play_mood())
+	mood_list.set_drag_forwarding(_mood_drag, _mood_can_drop, _mood_drop)
+	left.add_child(mood_list)
+	mood_name_edit.placeholder_text = "Mood name"
+	left.add_child(mood_name_edit)
+	var mrow := HBoxContainer.new()
+	mrow.add_theme_constant_override("separation", 4)
+	left.add_child(mrow)
+	_button(mrow, "New", _on_new_mood, "Create a mood with the name typed above")
+	_button(mrow, "Rename", _on_rename_mood, "Rename the selected mood to the name typed above")
+	_button(mrow, "Delete", _on_delete_mood, "Delete the selected mood (its songs stay in All Music and on disk)")
+	var play_mood := _button(left, "Play this mood", music.play_mood, "Start playing the selected mood with its look")
+	play_mood.size_flags_horizontal = SIZE_EXPAND_FILL
+
+	var right := VBoxContainer.new()
+	right.size_flags_horizontal = SIZE_EXPAND_FILL
+	right.add_theme_constant_override("separation", 6)
+	split.add_child(right)
 	var tools := HBoxContainer.new()
 	tools.add_theme_constant_override("separation", 6)
-	tab.add_child(tools)
+	right.add_child(tools)
 	search.placeholder_text = "Search"
 	search.size_flags_horizontal = SIZE_EXPAND_FILL
 	search.clear_button_enabled = true
@@ -197,19 +212,21 @@ func _build_playlist_tab(tabs: TabContainer) -> void:
 		sort_select.add_item(label)
 	sort_select.select(maxi(music.SORTS.find(music.sort_mode), 0))
 	sort_select.focus_mode = FOCUS_NONE
-	sort_select.tooltip_text = "Sort the playlist"
 	sort_select.item_selected.connect(func(i: int): music.set_sort(music.SORTS[i]))
+	popups.append(sort_select.get_popup())
 	tools.add_child(sort_select)
 	_button(tools, "+ Folder", _open_dialog.bind(FileDialog.FILE_MODE_OPEN_DIR), "Add a folder of music (scanned in the background). You can also drag folders or files onto the window.")
 	_button(tools, "+ Files", _open_dialog.bind(FileDialog.FILE_MODE_OPEN_FILES), "Add music files")
-	_button(tools, "Clear queue", music.clear_queue, "Remove all queued songs (right-click a song to queue it)")
-
 	playlist.focus_mode = FOCUS_NONE
 	playlist.size_flags_vertical = SIZE_EXPAND_FILL
+	playlist.select_mode = ItemList.SELECT_MULTI
 	playlist.item_clicked.connect(_on_playlist_clicked)
-	playlist.tooltip_text = "Click to play. Right-click: play now, queue next, add to a playlist, remove. Drag songs to reorder a playlist."
+	playlist.item_activated.connect(func(row: int):
+		if row < visible_rows.size():
+			music.play_track(visible_rows[row]))
+	playlist.tooltip_text = "Double-click to play. Ctrl/Shift-click to select several. Drag songs onto a mood to add them, or within a mood to reorder. Right-click: play, queue, moods, remove."
 	playlist.set_drag_forwarding(_playlist_drag, _playlist_can_drop, _playlist_drop)
-	tab.add_child(playlist)
+	right.add_child(playlist)
 
 	var delay_row := HBoxContainer.new()
 	delay_row.add_theme_constant_override("separation", 12)
@@ -257,7 +274,7 @@ func _build_studio_tab(tabs: TabContainer) -> void:
 	row3.add_theme_constant_override("separation", 6)
 	col.add_child(row3)
 	_button(row3, "Use globally", func(): director.set_global(director.working_name), "Use this preset for all songs that follow the global preset")
-	_button(row3, "Use for this song", func(): director.assign_to_song(director.working_name), "Always use this preset for the current song")
+	_button(row3, "Add to mood", _add_preset_to_mood, "Add this preset to the mood selected in the Moods tab")
 	_button(row3, "Restore built-ins", func(): director.restore_builtins(), "Bring back the original built-in presets")
 
 	var modes := Layer.MODE_NAMES
@@ -301,8 +318,7 @@ func _build_studio_tab(tabs: TabContainer) -> void:
 	col_row.add_theme_constant_override("separation", 6)
 	col.add_child(col_row)
 	_button(col_row, "Reset colours", _reset_colours, "Restore this preset's original colours")
-	_button(col_row, "Save colours for this song", _song_colours.bind(true), "This song keeps these colours whatever preset it uses")
-	_button(col_row, "Clear song colours", _song_colours.bind(false), "This song uses the preset's colours again")
+	_button(col_row, "Use for this mood", _mood_colours.bind(true), "The mood selected in the Moods tab keeps these colours whatever preset it shows")
 
 	_section(col, "Second layer")
 	g = _grid4(col)
@@ -345,7 +361,7 @@ func _build_studio_tab(tabs: TabContainer) -> void:
 
 ## Dancing companion: independent of the visualizer and its presets (saved app-wide).
 func _build_dancer_section(col: VBoxContainer) -> void:
-	_section(col, "Dancing companion")
+	_section(col, "Dancing companion (All Music; moods choose their own)")
 	var g := _grid4(col)
 	_label(g, "Dancer")
 	var on := CheckButton.new()
@@ -360,12 +376,21 @@ func _build_dancer_section(col: VBoxContainer) -> void:
 	var names: Array = director.dancer.list_characters()
 	for n in names:
 		pick.add_item(n)
-	pick.select(maxi(names.find(str(music.app_setting("dancer_character", "Lumen"))), 0))
+	pick.select(maxi(names.find(str(music.app_setting("dancer_character", "Aria"))), 0))
 	pick.tooltip_text = "Built-in companions, plus any dancers you put in the dancers folder (see README.txt there)"
 	pick.item_selected.connect(func(i: int):
 		music.set_app_setting("dancer_character", pick.get_item_text(i))
 		director.apply_dancer_settings())
 	_fill(g, pick)
+	_label(g, "Personality")
+	var pers := OptionButton.new()
+	for n in director.dancer.PERSONALITIES:
+		pers.add_item(n.capitalize())
+	pers.select(maxi(director.dancer.PERSONALITIES.find(str(music.app_setting("dancer_personality", "playful"))), 0))
+	pers.item_selected.connect(func(i: int):
+		music.set_app_setting("dancer_personality", director.dancer.PERSONALITIES[i])
+		director.apply_dancer_settings())
+	_fill(g, pers)
 	_label(g, "Lighting")
 	var light := _slider(float(music.app_setting("dancer_light", 60.0)), 100.0, func(v: float):
 		music.set_app_setting("dancer_light", v)
@@ -430,48 +455,168 @@ func _build_eq_tab(tabs: TabContainer) -> void:
 			s.value = 0.0)
 
 
-func _build_song_tab(tabs: TabContainer) -> void:
-	var col := _scroll_tab(tabs, "Song")
-	var g := _grid4(col)
-	backgrounds = music.list_backgrounds()
-	background_select.add_item("Default")
-	for file in backgrounds:
-		background_select.add_item(file.get_basename())
-	background_select.item_selected.connect(_on_background_selected)
-	_label(g, "Background")
-	_fill(g, background_select)
-	_label(g, "Look")
-	song_mode_select.add_item("Global preset")
-	song_mode_select.add_item("This song's preset")
-	song_mode_select.add_item("Automatic")
-	song_mode_select.tooltip_text = "Global: your global preset. This song's preset: the one chosen below. Automatic: chosen and tuned from how the song sounds."
-	song_mode_select.item_selected.connect(func(i: int): director.set_song_mode(SONG_MODES[i]))
-	_fill(g, song_mode_select)
-	_label(g, "Song preset")
-	song_preset_select.item_selected.connect(func(i: int):
-		if not syncing:
-			director.assign_to_song(str(song_preset_select.get_item_metadata(i))))
-	_fill(g, song_preset_select)
-	_label(g, "Automatic")
-	auto_label.text = "-"
-	auto_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	_fill(g, auto_label)
-	_label(g, "Main colour")
-	_fill(g, _color_row(color_button, "color"))
-	_label(g, "Second colour")
-	_fill(g, _color_row(color2_button, "color2"))
-	for item in [["Sensitivity", "sensitivity", 0.5, 1.5], ["Intensity", "intensity", 0.5, 1.5], ["Glow", "glow", 0.5, 1.5],
-			["Motion", "bg_motion", 0.0, 1.5], ["Density", "particle_density", 0.3, 1.6]]:
-		_label(g, item[0])
-		var s := _slider(1.0, item[3], _on_song_slider.bind(item[1]))
-		s.min_value = item[2]
-		s.step = 0.05
-		s.tooltip_text = "Adjustment for this song only (1.0 = unchanged)"
-		song_controls[item[1]] = s
-		_fill(g, s)
-	var reset_row := HBoxContainer.new()
-	col.add_child(reset_row)
-	_button(reset_row, "Reset this song's look", _reset_song, "Remove this song's colour, preset and adjustments (background is kept)")
+func _build_mood_look_tab(tabs: TabContainer) -> void:
+	look_box = _scroll_tab(tabs, "Mood Look")
+
+
+## The browsed mood's look: presets (and variation), backgrounds, colours, energy, dancer.
+## Rebuilt when another mood is selected.
+func _rebuild_mood_look(force := false) -> void:
+	var mood_name: String = music.active_mood
+	if mood_name == look_for and not force:
+		return
+	look_for = mood_name
+	for c in look_box.find_children("*", "", true, false):
+		if c is OptionButton or c is ColorPickerButton:
+			popups.erase(c.get_popup())
+	for c in look_box.get_children():
+		c.queue_free()
+	if mood_name == music.ALL_MUSIC:
+		var hint := Label.new()
+		hint.text = "All Music has no mood look.\nSelect or create a mood in the Moods tab to give it presets,\ncolours, backgrounds and a dancing companion.\nSongs played from All Music use the global preset."
+		look_box.add_child(hint)
+		return
+	var m: Dictionary = music.mood(mood_name)
+	_section(look_box, "Look of " + mood_name)
+
+	var pg := GridContainer.new()
+	pg.columns = 3
+	pg.add_theme_constant_override("h_separation", 12)
+	look_box.add_child(pg)
+	for pname in director.presets.names():
+		var cb := CheckBox.new()
+		cb.text = pname
+		cb.focus_mode = FOCUS_NONE
+		cb.button_pressed = pname in m.presets
+		cb.toggled.connect(_on_mood_preset_toggled.bind(pname))
+		pg.add_child(cb)
+	var vg := _grid4(look_box)
+	_label(vg, "Variation")
+	var variation := OptionButton.new()
+	variation.add_item("Auto variation")
+	variation.add_item("Fixed")
+	variation.select(1 if m.variation == "fixed" else 0)
+	variation.tooltip_text = "Auto variation: a different preset from this mood for each song. Fixed: always the preset on the right."
+	variation.item_selected.connect(func(i: int): music.set_mood_value(mood_name, "variation", ["auto", "fixed"][i]))
+	_fill(vg, variation)
+	_label(vg, "Fixed preset")
+	var fixed := OptionButton.new()
+	for pname in m.presets:
+		fixed.add_item(pname)
+	fixed.select(maxi(Array(m.presets).find(m.preset), 0))
+	fixed.item_selected.connect(func(i: int): music.set_mood_value(mood_name, "preset", fixed.get_item_text(i)))
+	_fill(vg, fixed)
+	var save_row := HBoxContainer.new()
+	look_box.add_child(save_row)
+	_button(save_row, "Save current look to this mood", _save_look_to_mood, "Save what is on screen now (including Studio changes) as a preset of this mood")
+
+	_section(look_box, "Backgrounds (rotate per song)")
+	var bg_grid := GridContainer.new()
+	bg_grid.columns = 3
+	bg_grid.add_theme_constant_override("h_separation", 12)
+	look_box.add_child(bg_grid)
+	var bgs: Array = music.list_backgrounds()
+	if bgs.is_empty():
+		var none := Label.new()
+		none.text = "No images in the backgrounds folder: the forest is used."
+		bg_grid.add_child(none)
+	for f in bgs:
+		var cb := CheckBox.new()
+		cb.text = f.get_basename()
+		cb.focus_mode = FOCUS_NONE
+		cb.button_pressed = f in m.backgrounds
+		cb.toggled.connect(_on_mood_bg_toggled.bind(f))
+		bg_grid.add_child(cb)
+
+	_section(look_box, "Colours")
+	var cg := _grid4(look_box)
+	for idx in 2:
+		_label(cg, ["Main colour", "Second colour"][idx])
+		var picker := ColorPickerButton.new()
+		picker.edit_alpha = false
+		picker.focus_mode = FOCUS_NONE
+		picker.custom_minimum_size.y = 24
+		picker.color = Color(m.colors[idx]) if m.colors.size() >= 2 else Color(director.working.colors[idx])
+		picker.color_changed.connect(_on_mood_color.bind(idx))
+		popups.append(picker.get_popup())
+		_fill(cg, picker)
+	var crow := HBoxContainer.new()
+	crow.add_theme_constant_override("separation", 6)
+	look_box.add_child(crow)
+	_button(crow, "Use Studio colours", _mood_colours.bind(true), "Copy the Studio's main, second and element colours into this mood")
+	_button(crow, "Use preset colours", _mood_colours.bind(false), "Let each preset bring its own colours")
+
+	_section(look_box, "Energy and companion")
+	var eg := _grid4(look_box)
+	for item in [["Sensitivity", "sensitivity", 0.5, 1.5], ["Intensity", "intensity", 0.5, 1.5], ["Background motion", "motion", 0.0, 1.5]]:
+		_label(eg, item[0])
+		var sl := _slider(float(m[item[1]]), item[3], func(v: float): music.set_mood_value(mood_name, item[1], v))
+		sl.min_value = item[2]
+		sl.step = 0.05
+		sl.value = float(m[item[1]])
+		_fill(eg, sl)
+	_label(eg, "Dancer")
+	var dancer_pick := OptionButton.new()
+	var names: Array = ["None"] + director.dancer.list_characters()
+	for n in names:
+		dancer_pick.add_item(n)
+	dancer_pick.select(maxi(names.find(m.dancer), 0) if m.dancer != "" else 0)
+	dancer_pick.item_selected.connect(func(i: int): music.set_mood_value(mood_name, "dancer", "" if i == 0 else dancer_pick.get_item_text(i)))
+	_fill(eg, dancer_pick)
+	_label(eg, "Personality")
+	var pers := OptionButton.new()
+	for n in director.dancer.PERSONALITIES:
+		pers.add_item(n.capitalize())
+	pers.select(maxi(director.dancer.PERSONALITIES.find(m.personality), 0))
+	pers.item_selected.connect(func(i: int): music.set_mood_value(mood_name, "personality", director.dancer.PERSONALITIES[i]))
+	_fill(eg, pers)
+
+
+func _on_mood_preset_toggled(on: bool, pname: String) -> void:
+	var m: Dictionary = music.mood(music.active_mood)
+	var list: Array = Array(m.presets).duplicate()
+	if on and not (pname in list):
+		list.append(pname)
+	elif not on:
+		list.erase(pname)
+	music.set_mood_value(music.active_mood, "presets", list)
+	_rebuild_mood_look(true)
+
+
+func _on_mood_bg_toggled(on: bool, file: String) -> void:
+	var list: Array = Array(music.mood(music.active_mood).backgrounds).duplicate()
+	if on and not (file in list):
+		list.append(file)
+	elif not on:
+		list.erase(file)
+	music.set_mood_value(music.active_mood, "backgrounds", list)
+
+
+func _on_mood_color(c: Color, idx: int) -> void:
+	var m: Dictionary = music.mood(music.active_mood)
+	var cols: Array = Array(m.colors).duplicate() if m.colors.size() >= 2 else Array(director.working.colors).duplicate()
+	cols[idx] = "#" + c.to_html(false)
+	music.set_mood_value(music.active_mood, "colors", cols)
+
+
+func _mood_colours(use_studio: bool) -> void:
+	if music.active_mood == music.ALL_MUSIC:
+		return
+	music.set_mood_value(music.active_mood, "colors", Array(director.working.colors).duplicate() if use_studio else [])
+	music.set_mood_value(music.active_mood, "palette", Array(director.working.palette).duplicate() if use_studio else [])
+	_rebuild_mood_look(true)
+
+
+## Saves the look on screen as a preset that belongs to the browsed mood.
+func _save_look_to_mood() -> void:
+	var mood_name: String = music.active_mood
+	if mood_name == music.ALL_MUSIC:
+		return
+	var saved: String = director.save_working(director.presets.unique_name(mood_name + " look"))
+	var list: Array = Array(music.mood(mood_name).presets).duplicate()
+	list.append(saved)
+	music.set_mood_value(mood_name, "presets", list)
+	_rebuild_mood_look(true)
 
 
 func _build_settings_tab(tabs: TabContainer) -> void:
@@ -650,11 +795,6 @@ func _input(event: InputEvent) -> void:
 		return
 	if mini and _mini_input(event):
 		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed and pending_play >= 0:
-		var row := pending_play
-		pending_play = -1
-		if not get_viewport().gui_is_dragging():
-			music.play_track(row)
 	var focus := get_viewport().gui_get_focus_owner()
 	if focus is LineEdit:
 		# Typing in a text field: only Esc (leave the field) or a click elsewhere.
@@ -693,7 +833,7 @@ func _input(event: InputEvent) -> void:
 func _process(delta: float) -> void:
 	idle += delta
 	for p in popups:
-		if p.visible:
+		if is_instance_valid(p) and p.visible:
 			idle = 0.0
 	if file_dialog.visible or context_menu.visible:
 		idle = 0.0
@@ -734,9 +874,6 @@ func _process(delta: float) -> void:
 	volume_slider.value = 0.0 if music.muted else music.volume * 100.0
 	syncing = false
 	_update_recording_ui()
-	var auto_text: String = ("%s (%s)" % [director.auto_choice, director.auto_reason]) if director.auto_choice != "" else ("Listening..." if director.source == "auto" else "Off")
-	if auto_label.text != auto_text:
-		auto_label.text = auto_text
 
 
 ## Hides the native title bar/borders while the overlay is hidden (optional). The client
@@ -759,7 +896,7 @@ func _update_frame() -> void:
 
 func _refresh_playlist() -> void:
 	var filter := search.text.strip_edges().to_lower()
-	var named: bool = music.active_playlist != music.ALL_MUSIC
+	var in_mood: bool = music.active_mood != music.ALL_MUSIC
 	playlist.clear()
 	visible_rows.clear()
 	for i in music.tracks.size():
@@ -768,103 +905,219 @@ func _refresh_playlist() -> void:
 		if filter != "" and not (filter in label_text.to_lower()):
 			continue
 		var q: int = music.queue.find(path)
-		var missing := named and not FileAccess.file_exists(path)
+		var missing := in_mood and not FileAccess.file_exists(path)
 		var row := playlist.add_item(("[%d] " % (q + 1) if q >= 0 else "") + label_text + ("  (missing)" if missing else ""))
 		if missing:
 			playlist.set_item_custom_fg_color(row, Color(GOLD, 0.35))
 		visible_rows.append(i)
-	# Playlist selector and sort (sorting applies to All Music; playlists keep their order).
-	syncing = true
-	playlist_select.clear()
-	for n in music.playlist_names():
-		playlist_select.add_item(n)
-	playlist_select.select(maxi(music.playlist_names().find(music.active_playlist), 0))
-	syncing = false
-	sort_select.disabled = named
-	sort_select.tooltip_text = "Sort All Music" if not named else "Playlists keep their own order: drag songs to reorder"
+	sort_select.disabled = in_mood
+	sort_select.tooltip_text = "Sort All Music" if not in_mood else "Moods keep their own order: drag songs to reorder"
+	_refresh_moods()
 	_highlight_current()
+	_rebuild_mood_look()
+
+
+func _refresh_moods() -> void:
+	syncing = true
+	mood_list.clear()
+	for n in music.mood_names():
+		var playing_here: bool = n == music.playing_mood and music.current_path != ""
+		var count: int = music.library.size() if n == music.ALL_MUSIC else music.mood(n).tracks.size()
+		var row := mood_list.add_item("%s  (%d)%s" % [n, count, "  - now" if playing_here else ""], _mood_icon(n))
+		mood_list.set_item_metadata(row, n)
+		if playing_here:
+			mood_list.set_item_custom_fg_color(row, GOLD.lightened(0.25))
+	mood_list.select(maxi(music.mood_names().find(music.active_mood), 0))
+	syncing = false
+
+
+## A small thumbnail: the mood's first background, else a swatch of its colours.
+func _mood_icon(mood_name: String) -> Texture2D:
+	var m: Dictionary = music.mood(mood_name)
+	var key := mood_name + str(m.get("backgrounds", [])) + str(m.get("colors", []))
+	if _thumbs.has(key):
+		return _thumbs[key]
+	var img: Image = null
+	for b in m.get("backgrounds", []):
+		var path: String = music.backgrounds_dir.path_join(b)
+		if FileAccess.file_exists(path):
+			img = Image.load_from_file(path)
+			break
+	if img:
+		img.resize(34, 20, Image.INTERPOLATE_BILINEAR)
+	else:
+		var cols: Array = m.get("colors", [])
+		var a := Color(cols[0]) if cols.size() >= 2 else (GOLD if mood_name == music.ALL_MUSIC else Color(0.55, 0.42, 0.25))
+		var b := Color(cols[1]) if cols.size() >= 2 else Color(0.12, 0.16, 0.14)
+		img = Image.create(34, 20, false, Image.FORMAT_RGBA8)
+		for x in 34:
+			for y in 20:
+				img.set_pixel(x, y, a.lerp(b, float(x) / 33.0))
+	_thumbs[key] = ImageTexture.create_from_image(img)
+	return _thumbs[key]
 
 
 func _highlight_current() -> void:
 	var row := visible_rows.find(music.current)
+	playlist.deselect_all()
 	if row >= 0 and music.current_path in music.tracks:
-		playlist.select(row)
+		playlist.select(row, false)
 		playlist.ensure_current_is_visible()
-	else:
-		playlist.deselect_all()
+
+
+func _selected_paths() -> Array:
+	var out := []
+	for r in playlist.get_selected_items():
+		if r < visible_rows.size():
+			out.append(music.tracks[visible_rows[r]])
+	return out
 
 
 func _on_playlist_clicked(row: int, at: Vector2, button: int) -> void:
-	if row >= visible_rows.size():
+	if row >= visible_rows.size() or button != MOUSE_BUTTON_RIGHT:
 		return
-	if button == MOUSE_BUTTON_LEFT:
-		pending_play = visible_rows[row]  # Played on release (see _input) unless dragged.
-	elif button == MOUSE_BUTTON_RIGHT:
-		context_row = visible_rows[row]
-		add_to_menu.clear()
-		for n in music.playlists:
-			add_to_menu.add_item(n)
-		context_menu.set_item_disabled(context_menu.get_item_index(3), music.playlists.is_empty())
-		context_menu.set_item_text(context_menu.get_item_index(2), "Remove from this playlist" if music.active_playlist != music.ALL_MUSIC else "Remove from All Music")
-		context_menu.position = Vector2i(playlist.get_screen_position() + at)
-		context_menu.popup()
+	if not playlist.is_selected(row):
+		playlist.deselect_all()
+		playlist.select(row)
+	context_row = visible_rows[row]
+	var paths := _selected_paths()
+	moods_menu.clear()
+	var i := 0
+	for n in music.moods:
+		moods_menu.add_check_item(n, i)
+		moods_menu.set_item_checked(i, paths.all(func(p): return p in music.mood(n).tracks))
+		i += 1
+	context_menu.set_item_disabled(context_menu.get_item_index(3), music.moods.is_empty())
+	context_menu.set_item_text(context_menu.get_item_index(2), "Remove from this mood" if music.active_mood != music.ALL_MUSIC else "Remove from All Music")
+	context_menu.position = Vector2i(playlist.get_screen_position() + at)
+	context_menu.popup()
 
 
-# --- Named playlists ------------------------------------------------------------------
-
-func _on_new_playlist() -> void:
-	var n := playlist_name_edit.text.strip_edges()
-	if music.create_playlist(n):
-		playlist_name_edit.text = ""
-		director.show_toast("Created playlist " + n)
+## Checkable mood tags: tick to add the selected songs to a mood, untick to remove them.
+func _on_mood_tag(id: int) -> void:
+	var mood_name: String = moods_menu.get_item_text(moods_menu.get_item_index(id))
+	var paths := _selected_paths()
+	var idx := moods_menu.get_item_index(id)
+	if moods_menu.is_item_checked(idx):
+		music.remove_from_mood(mood_name, paths)
 	else:
-		director.show_toast("Type a new, unused playlist name first")
+		music.add_to_mood(mood_name, paths)
+	moods_menu.set_item_checked(idx, not moods_menu.is_item_checked(idx))
 
 
-func _on_rename_playlist() -> void:
-	if music.rename_playlist(music.active_playlist, playlist_name_edit.text):
-		playlist_name_edit.text = ""
+func _on_new_mood() -> void:
+	var n := mood_name_edit.text.strip_edges()
+	if music.create_mood(n):
+		mood_name_edit.text = ""
+		director.show_toast("Created mood %s: drop songs onto it" % n)
 	else:
-		director.show_toast("Select one of your playlists and type a new, unused name")
+		director.show_toast("Type a new, unused mood name first")
 
 
-func _on_delete_playlist() -> void:
-	if music.active_playlist == music.ALL_MUSIC:
+func _on_rename_mood() -> void:
+	if music.rename_mood(music.active_mood, mood_name_edit.text):
+		mood_name_edit.text = ""
+		_rebuild_mood_look(true)
+	else:
+		director.show_toast("Select one of your moods and type a new, unused name")
+
+
+func _on_delete_mood() -> void:
+	if music.active_mood == music.ALL_MUSIC:
 		director.show_toast("All Music is the permanent library and cannot be deleted")
 		return
-	var n: String = music.active_playlist
-	music.delete_playlist(n)
-	director.show_toast("Deleted playlist %s (songs are kept)" % n)
+	var dlg := ConfirmationDialog.new()
+	dlg.dialog_text = "Delete the mood \"%s\"?\nIts songs stay in All Music and on disk." % music.active_mood
+	add_child(dlg)
+	var n: String = music.active_mood
+	dlg.confirmed.connect(func():
+		music.delete_mood(n)
+		director.show_toast("Deleted mood %s (songs are kept)" % n))
+	dlg.visibility_changed.connect(func():
+		if not dlg.visible:
+			dlg.queue_free())
+	dlg.popup_centered()
 
 
-## Drag-and-drop reordering: only in a named playlist and while not filtering.
+func _add_preset_to_mood() -> void:
+	var mood_name: String = music.active_mood
+	if mood_name == music.ALL_MUSIC:
+		director.show_toast("Select a mood in the Moods tab first")
+		return
+	var list: Array = Array(music.mood(mood_name).presets).duplicate()
+	if not (director.working_name in list):
+		list.append(director.working_name)
+		music.set_mood_value(mood_name, "presets", list)
+	director.show_toast("%s added to %s" % [director.working_name, mood_name])
+	_rebuild_mood_look(true)
+
+
+## Songs are dragged with their paths: onto a mood (adds them) or within a mood (reorders).
 func _playlist_drag(at: Vector2) -> Variant:
 	var row := playlist.get_item_at_position(at, true)
-	if row < 0 or music.active_playlist == music.ALL_MUSIC or search.text.strip_edges() != "":
+	if row < 0:
 		return null
-	pending_play = -1
+	if not playlist.is_selected(row):
+		playlist.select(row)
+	var paths := _selected_paths()
 	var preview := Label.new()
-	preview.text = playlist.get_item_text(row)
+	preview.text = playlist.get_item_text(row) if paths.size() == 1 else "%d songs" % paths.size()
 	preview.add_theme_color_override("font_color", GOLD)
 	playlist.set_drag_preview(preview)
-	return {"tinserbox_row": visible_rows[row]}
+	return {"tinserbox_tracks": paths, "tinserbox_row": visible_rows[row]}
 
 
 func _playlist_can_drop(_at: Vector2, data: Variant) -> bool:
-	return data is Dictionary and data.has("tinserbox_row")
+	return data is Dictionary and data.has("tinserbox_tracks") and data.tinserbox_tracks.size() == 1 \
+		and music.active_mood != music.ALL_MUSIC and search.text.strip_edges() == ""
 
 
 func _playlist_drop(at: Vector2, data: Variant) -> void:
 	var row := playlist.get_item_at_position(at, true)
 	var target: int = visible_rows[row] if row >= 0 else music.tracks.size() - 1
-	music.move_in_playlist(data.tinserbox_row, target)
+	music.move_in_mood(data.tinserbox_row, target)
+
+
+func _mood_drag(at: Vector2) -> Variant:
+	var row := mood_list.get_item_at_position(at, true)
+	if row <= 0:
+		return null  # All Music stays first.
+	var preview := Label.new()
+	preview.text = str(mood_list.get_item_metadata(row))
+	preview.add_theme_color_override("font_color", GOLD)
+	mood_list.set_drag_preview(preview)
+	return {"tinserbox_mood": str(mood_list.get_item_metadata(row))}
+
+
+func _mood_can_drop(at: Vector2, data: Variant) -> bool:
+	if not (data is Dictionary):
+		return false
+	var row := mood_list.get_item_at_position(at, true)
+	if data.has("tinserbox_tracks"):
+		return row > 0
+	return data.has("tinserbox_mood")
+
+
+func _mood_drop(at: Vector2, data: Variant) -> void:
+	var row := mood_list.get_item_at_position(at, true)
+	if data.has("tinserbox_tracks"):
+		music.add_to_mood(str(mood_list.get_item_metadata(row)), data.tinserbox_tracks)
+	else:
+		music.move_mood(data.tinserbox_mood, maxi(row - 1, 0) if row >= 0 else music.moods.size())
 
 
 func _on_context(id: int) -> void:
 	match id:
 		0: music.play_track(context_row)
-		1: music.queue_next(context_row)
-		2: music.remove_tracks([context_row])
+		1:
+			for p in _selected_paths():
+				music.queue_next(music.tracks.find(p))
+		2:
+			var rows := []
+			for p in _selected_paths():
+				rows.append(music.tracks.find(p))
+			music.remove_tracks(rows)
+		4: music.clear_queue()
 
 
 func _open_dialog(mode: FileDialog.FileMode) -> void:
@@ -896,24 +1149,7 @@ func _on_track_changed(_index: int) -> void:
 	scroll_title.text = title.text
 	scroll_title.reset_size()
 	scroll_title.position.x = size.x
-	_highlight_current()
 	_refresh_playlist()
-	_sync_song()
-
-
-func _sync_song() -> void:
-	syncing = true
-	var file_index := backgrounds.find(str(music.song_setting("background", "")))
-	background_select.select(file_index + 1)
-	var c = music.song_setting("color", null)
-	color_button.color = c if c is Color else Color(director.working.colors[0]) if not director.working.is_empty() else GOLD
-	var c2 = music.song_setting("color2", null)
-	color2_button.color = c2 if c2 is Color else Color(director.working.colors[1]) if not director.working.is_empty() else GOLD
-	song_mode_select.select(maxi(SONG_MODES.find(str(music.song_setting("preset_mode", "global"))), 0))
-	for key in song_controls:
-		song_controls[key].value = float(music.song_setting(key, 1.0))
-	_fill_preset_list(song_preset_select, str(music.song_setting("preset", director.global_preset_name())))
-	syncing = false
 
 
 ## Shows only the settings that apply to the main layer's current visualizer.
@@ -963,19 +1199,6 @@ func _reset_colours() -> void:
 	director.edit("", "palette", pal.duplicate())
 
 
-func _song_colours(save: bool) -> void:
-	if save:
-		music.set_song_setting("color", Color(director.working.colors[0]))
-		music.set_song_setting("color2", Color(director.working.colors[1]))
-		music.set_song_setting("palette", director.working.palette.duplicate())
-		director.show_toast("Colours saved for this song")
-	else:
-		for key in ["color", "color2", "palette"]:
-			music.set_song_setting(key, null)
-		director.show_toast("This song uses the preset's colours")
-	_sync_song()
-
-
 func _sync_studio() -> void:
 	if director.working.is_empty():
 		return
@@ -999,7 +1222,6 @@ func _sync_studio() -> void:
 		elif control is HSlider:
 			control.value = float(value)
 	syncing = false
-	_sync_song()
 
 
 func _fill_preset_list(select: OptionButton, selected: String) -> void:
@@ -1164,51 +1386,6 @@ func _toggle_diag() -> void:
 	director.diag.visible = not director.diag.visible
 	director._update_diag()
 
-
-func _reset_color(key: String) -> void:
-	music.set_song_setting(key, null)
-	_sync_song()
-
-
-func _on_background_selected(i: int) -> void:
-	if syncing:
-		return
-	music.set_song_setting("background", backgrounds[i - 1] if i > 0 else null)
-	director._on_track_changed(music.current)
-
-
-func _on_song_slider(v: float, key: String) -> void:
-	if syncing:
-		return
-	music.set_song_setting(key, null if is_equal_approx(v, 1.0) else v)
-	if key == "sensitivity":
-		audio.song_sensitivity = v
-
-
-func _reset_song() -> void:
-	for key in ["preset_mode", "preset", "color", "color2", "sensitivity", "glow", "bg_motion", "particle_density", "intensity"]:
-		music.set_song_setting(key, null)
-	audio.song_sensitivity = 1.0
-	director.set_song_mode("global")
-	_sync_song()
-
-
-func _color_row(button: ColorPickerButton, key: String) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	button.edit_alpha = false
-	button.focus_mode = FOCUS_NONE
-	button.size_flags_horizontal = SIZE_EXPAND_FILL
-	button.custom_minimum_size.y = 24
-	button.color_changed.connect(func(c: Color):
-		if not syncing:
-			music.set_song_setting(key, c))
-	row.add_child(button)
-	_button(row, "Default", _reset_color.bind(key), "Use the preset's colour")
-	popups.append(button.get_popup())
-	return row
-
-
-# --- Studio controls --------------------------------------------------------------------
 
 func _studio_slider(g: GridContainer, text: String, section: String, key: String, lo: float, hi: float, step := 0.01) -> void:
 	_label(g, text)
@@ -1508,6 +1685,7 @@ func _make_theme() -> Theme:
 	th.set_color("font_color", "Label", GOLD)
 	for state in ["normal", "hover", "pressed", "hover_pressed", "focus", "disabled"]:
 		th.set_stylebox(state, "CheckButton", StyleBoxEmpty.new())
+		th.set_stylebox(state, "CheckBox", StyleBoxEmpty.new())
 
 	var track := StyleBoxFlat.new()
 	track.bg_color = Color(GOLD, 0.18)

@@ -8,6 +8,7 @@ extends AudioStreamPlayer
 
 signal track_changed(index: int)
 signal playlist_changed
+signal moods_changed
 signal notice(text: String)
 signal source_changed
 signal recording_changed
@@ -22,7 +23,14 @@ const RESTART_DELAY := 2.0
 const APP := "_app"  # App-wide settings; song sections are keyed by filename.
 const PLAYLIST := "_playlist"  # Playlist state.
 const SORTS := ["name", "name_desc", "artist", "modified"]
-const ALL_MUSIC := "All Music"  # The permanent library; named playlists are stored separately.
+const ALL_MUSIC := "All Music"  # The permanent library; moods are stored separately.
+## A mood: its songs (play order) and the look applied while it plays.
+const MOOD_DEFAULT := {
+	"tracks": [], "presets": [], "variation": "auto", "preset": "",
+	"colors": [], "palette": [], "backgrounds": [],
+	"sensitivity": 1.0, "intensity": 1.0, "motion": 1.0,
+	"dancer": "", "personality": "playful",
+}
 const EQ_BANDS := [60.0, 150.0, 400.0, 1000.0, 2400.0, 6000.0, 15000.0]
 const EQ21_HZ := [22, 32, 44, 63, 90, 125, 175, 250, 350, 500, 700, 1000, 1400, 2000, 2800, 4000, 5600, 8000, 11000, 16000, 22000]
 const MEDIA_HELPER := "TinserBoxMedia.exe"
@@ -35,9 +43,11 @@ var base_dir := _data_dir()
 var music_dir := base_dir.path_join("music")
 var backgrounds_dir := base_dir.path_join("backgrounds")
 var config_path := base_dir.path_join("settings.cfg")
-var playlists_path := base_dir.path_join("playlists.json")
-var playlists := {}  # name -> Array of absolute paths (order is the play order)
-var active_playlist := ALL_MUSIC
+var playlists_path := base_dir.path_join("playlists.json")  # Legacy, read once for migration.
+var moods_path := base_dir.path_join("moods.json")
+var moods := {}  # name -> mood dictionary (see MOOD_DEFAULT); dictionary order = display order
+var active_mood := ALL_MUSIC  # The mood being browsed (its songs feed Next/Shuffle/Repeat).
+var playing_mood := ALL_MUSIC  # The mood the playing song was started from (drives the look).
 var settings := ConfigFile.new()
 
 var tracks: Array[String] = []  # Current playlist (absolute paths) in display order.
@@ -141,7 +151,7 @@ func _ready() -> void:
 			library[music_dir.path_join(file)] = true
 	for f in extra_files:
 		library[f] = true
-	_load_playlists()
+	_load_moods()
 	_rebuild("")
 
 	# System audio was the last source: wait for the helper instead of starting a song.
@@ -234,9 +244,9 @@ func _process(delta: float) -> void:
 
 func _rebuild(keep_path: String) -> void:
 	var list: Array[String] = []
-	if active_playlist != ALL_MUSIC:
-		# A named playlist keeps its own order, including songs that are currently missing.
-		for p in playlists.get(active_playlist, []):
+	if active_mood != ALL_MUSIC:
+		# A mood keeps its own order, including songs that are currently missing.
+		for p in moods[active_mood].tracks:
 			list.append(p)
 		_set_tracks(list, keep_path)
 		return
@@ -317,11 +327,11 @@ func add_paths(paths: PackedStringArray) -> void:
 			if not (p in extra_files) and not library.has(p):
 				extra_files.append(p)
 			library[p] = true
-			if active_playlist != ALL_MUSIC and not (p in playlists[active_playlist]):
-				playlists[active_playlist].append(p)
+			if active_mood != ALL_MUSIC and not (p in moods[active_mood].tracks):
+				moods[active_mood].tracks.append(p)
 			added += 1
 	if added > 0:
-		_save_playlists()
+		_save_moods()
 		settings.set_value(PLAYLIST, "files", extra_files)
 		settings.set_value(PLAYLIST, "removed", removed)
 		settings.save(config_path)
@@ -329,116 +339,225 @@ func add_paths(paths: PackedStringArray) -> void:
 		_rebuild(current_path)
 
 
-# --- Named playlists ------------------------------------------------------------------
+# --- Moods ------------------------------------------------------------------------------
 
-func _load_playlists() -> void:
-	playlists = {}
-	if FileAccess.file_exists(playlists_path):
-		var data = JSON.parse_string(FileAccess.get_file_as_string(playlists_path))
+func _new_mood(tracks: Array = []) -> Dictionary:
+	var m: Dictionary = MOOD_DEFAULT.duplicate(true)
+	m.tracks = tracks.duplicate()
+	m.presets = [str(app_setting("preset", "Seven Souls"))]
+	return m
+
+
+func _load_moods() -> void:
+	moods = {}
+	if FileAccess.file_exists(moods_path):
+		var data = JSON.parse_string(FileAccess.get_file_as_string(moods_path))
 		if data is Dictionary:
-			for p in data.get("playlists", []):
-				if p is Dictionary and str(p.get("name", "")).strip_edges() != "":
-					playlists[str(p.name)] = Array(p.get("tracks", [])).map(func(t): return str(t))
-			active_playlist = str(data.get("active", ALL_MUSIC))
-	if not playlists.has(active_playlist):
-		active_playlist = ALL_MUSIC
+			for m in data.get("moods", []):
+				if m is Dictionary and str(m.get("name", "")).strip_edges() != "":
+					var mood: Dictionary = MOOD_DEFAULT.duplicate(true)
+					mood.merge(m, true)
+					mood.erase("name")
+					mood.tracks = Array(mood.tracks).map(func(t): return str(t))
+					moods[str(m.name)] = mood
+			active_mood = str(data.get("active", ALL_MUSIC))
+	elif FileAccess.file_exists(playlists_path):
+		_migrate_playlists()
+	if not moods.has(active_mood):
+		active_mood = ALL_MUSIC
+	playing_mood = active_mood
 
 
-func _save_playlists() -> void:
+## One-time migration: every playlist becomes a mood with the same name, songs and order.
+## playlists.json is left untouched. Per-song looks of its songs (presets, backgrounds,
+## colours) become the mood's look where they agree; nothing is deleted from settings.cfg.
+func _migrate_playlists() -> void:
+	var data = JSON.parse_string(FileAccess.get_file_as_string(playlists_path))
+	if not (data is Dictionary):
+		return
+	for p in data.get("playlists", []):
+		if not (p is Dictionary) or str(p.get("name", "")).strip_edges() == "":
+			continue
+		var tracks: Array = Array(p.get("tracks", [])).map(func(t): return str(t))
+		var mood := _new_mood(tracks)
+		var presets := []
+		var bgs := []
+		var colors := {}
+		for t in tracks:
+			var section: String = t.get_file()
+			if settings.get_value(section, "preset_mode", "") == "song" and settings.has_section_key(section, "preset"):
+				var pr := str(settings.get_value(section, "preset"))
+				if not (pr in presets):
+					presets.append(pr)
+			if settings.has_section_key(section, "background"):
+				var bg := str(settings.get_value(section, "background"))
+				if not (bg in bgs):
+					bgs.append(bg)
+			var c = settings.get_value(section, "color", null) if settings.has_section_key(section, "color") else null
+			if c is Color:
+				colors["#" + c.to_html(false)] = true
+		if not presets.is_empty():
+			mood.presets = presets
+		mood.backgrounds = bgs
+		if colors.size() == 1:
+			mood.colors = [colors.keys()[0], "#cc8052"]
+		moods[str(p.name)] = mood
+	active_mood = str(data.get("active", ALL_MUSIC))
+	_save_moods()
+	notice.emit("Your playlists are now moods")
+
+
+func _save_moods() -> void:
 	var list := []
-	for n in playlists:
-		list.append({"name": n, "tracks": playlists[n]})
-	var f := FileAccess.open(playlists_path, FileAccess.WRITE)
+	for n in moods:
+		var m: Dictionary = moods[n].duplicate(true)
+		m.name = n
+		list.append(m)
+	var f := FileAccess.open(moods_path, FileAccess.WRITE)
 	if f:
-		f.store_string(JSON.stringify({"schema": 1, "active": active_playlist, "playlists": list}, "\t"))
+		f.store_string(JSON.stringify({"schema": 1, "active": active_mood, "moods": list}, "\t"))
+	moods_changed.emit()
 
 
-func playlist_names() -> Array:
-	return [ALL_MUSIC] + playlists.keys()
+func mood_names() -> Array:
+	return [ALL_MUSIC] + moods.keys()
 
 
-func create_playlist(playlist_name: String) -> bool:
-	var n := playlist_name.strip_edges()
-	if n == "" or n == ALL_MUSIC or playlists.has(n):
+func mood(mood_name: String) -> Dictionary:
+	return moods.get(mood_name, {})
+
+
+## The mood whose look applies now (empty when playing from All Music).
+func playing_mood_data() -> Dictionary:
+	return moods.get(playing_mood, {})
+
+
+func create_mood(mood_name: String) -> bool:
+	var n := mood_name.strip_edges()
+	if n == "" or n == ALL_MUSIC or moods.has(n):
 		return false
-	playlists[n] = []
-	_save_playlists()
-	set_active_playlist(n)
+	moods[n] = _new_mood()
+	_save_moods()  # The browsed list stays, so its songs can be dropped onto the new mood.
 	return true
 
 
-func rename_playlist(old_name: String, new_name: String) -> bool:
+func rename_mood(old_name: String, new_name: String) -> bool:
 	var n := new_name.strip_edges()
-	if not playlists.has(old_name) or n == "" or n == ALL_MUSIC or playlists.has(n):
+	if not moods.has(old_name) or n == "" or n == ALL_MUSIC or moods.has(n):
 		return false
 	var renamed := {}
-	for k in playlists:  # Keep the original position in the list.
-		renamed[n if k == old_name else k] = playlists[k]
-	playlists = renamed
-	if active_playlist == old_name:
-		active_playlist = n
-	_save_playlists()
+	for k in moods:  # Keep the original position in the list.
+		renamed[n if k == old_name else k] = moods[k]
+	moods = renamed
+	if active_mood == old_name:
+		active_mood = n
+	if playing_mood == old_name:
+		playing_mood = n
+	_save_moods()
 	playlist_changed.emit()
 	return true
 
 
-## Deletes the playlist only; its songs stay in All Music and on disk.
-func delete_playlist(playlist_name: String) -> void:
-	if not playlists.has(playlist_name):
+## Deletes the mood only; its songs stay in All Music and on disk.
+func delete_mood(mood_name: String) -> void:
+	if not moods.has(mood_name):
 		return
-	playlists.erase(playlist_name)
-	if active_playlist == playlist_name:
-		active_playlist = ALL_MUSIC
-	_save_playlists()
+	moods.erase(mood_name)
+	if active_mood == mood_name:
+		active_mood = ALL_MUSIC
+	_save_moods()
 	_rebuild(current_path)
 
 
-## Switching never interrupts the song that is playing.
-func set_active_playlist(playlist_name: String) -> void:
-	active_playlist = playlist_name if playlists.has(playlist_name) else ALL_MUSIC
-	_save_playlists()
+## Reorders the mood list (drag-and-drop): moves `mood_name` to `to_index` among moods.
+func move_mood(mood_name: String, to_index: int) -> void:
+	if not moods.has(mood_name):
+		return
+	var names: Array = moods.keys()
+	names.erase(mood_name)
+	names.insert(clampi(to_index, 0, names.size()), mood_name)
+	var reordered := {}
+	for n in names:
+		reordered[n] = moods[n]
+	moods = reordered
+	_save_moods()
+
+
+## Browsing another mood never interrupts the song that is playing.
+func set_active_mood(mood_name: String) -> void:
+	active_mood = mood_name if moods.has(mood_name) else ALL_MUSIC
+	_save_moods()
 	_rebuild(current_path)
 
 
-func add_to_playlist(playlist_name: String, paths: Array) -> void:
-	if not playlists.has(playlist_name):
+## Starts the browsed mood from its first song (or a random one in shuffle).
+func play_mood() -> void:
+	if tracks.is_empty():
+		return
+	if shuffle:
+		_build_order(-1)
+		_play(order[0])
+	else:
+		play_track(0)
+
+
+func add_to_mood(mood_name: String, paths: Array) -> void:
+	if not moods.has(mood_name):
 		return
 	var added := 0
 	for p in paths:
-		if not (p in playlists[playlist_name]):
-			playlists[playlist_name].append(p)
+		if not (p in moods[mood_name].tracks):
+			moods[mood_name].tracks.append(p)
 			added += 1
-	_save_playlists()
-	notice.emit("Added %d song%s to %s" % [added, "" if added == 1 else "s", playlist_name])
-	if active_playlist == playlist_name:
+	_save_moods()
+	notice.emit("Added %d song%s to %s" % [added, "" if added == 1 else "s", mood_name])
+	if active_mood == mood_name:
 		_rebuild(current_path)
 
 
-## Drag-and-drop reordering inside a named playlist.
-func move_in_playlist(from_index: int, to_index: int) -> void:
-	if active_playlist == ALL_MUSIC:
+func remove_from_mood(mood_name: String, paths: Array) -> void:
+	if not moods.has(mood_name):
 		return
-	var list: Array = playlists[active_playlist]
+	for p in paths:
+		moods[mood_name].tracks.erase(p)
+	_save_moods()
+	if active_mood == mood_name:
+		_rebuild(current_path)
+
+
+## Mood tags of a song (it can belong to any number of moods).
+func moods_of(path: String) -> Array:
+	return moods.keys().filter(func(n): return path in moods[n].tracks)
+
+
+## Drag-and-drop reordering inside the browsed mood.
+func move_in_mood(from_index: int, to_index: int) -> void:
+	if active_mood == ALL_MUSIC:
+		return
+	var list: Array = moods[active_mood].tracks
 	if from_index < 0 or from_index >= list.size():
 		return
 	var item = list.pop_at(from_index)
 	list.insert(clampi(to_index, 0, list.size()), item)
-	_save_playlists()
+	_save_moods()
 	_rebuild(current_path)
 
 
+func set_mood_value(mood_name: String, key: String, value: Variant) -> void:
+	if moods.has(mood_name):
+		moods[mood_name][key] = value
+		_save_moods()
+
+
 ## In All Music: removes songs from the library view (files stay on disk, restored if added
-## again). In a named playlist: removes them from that playlist only.
+## again). In a mood: removes them from that mood only.
 func remove_tracks(indices: Array) -> void:
-	if active_playlist != ALL_MUSIC:
+	if active_mood != ALL_MUSIC:
 		var drop := []
 		for i in indices:
 			if i >= 0 and i < tracks.size():
 				drop.append(tracks[i])
-		for p in drop:
-			playlists[active_playlist].erase(p)
-		_save_playlists()
-		_rebuild(current_path)
+		remove_from_mood(active_mood, drop)
 		return
 	for i in indices:
 		if i >= 0 and i < tracks.size():
@@ -520,6 +639,7 @@ func _play(index: int) -> void:
 			stop_playback()
 		return
 	_failures = 0
+	playing_mood = active_mood
 	audio.suppress_transients(0.5)
 	stream = s
 	play()
