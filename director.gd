@@ -1,11 +1,11 @@
 extends Node
-## Scene director: builds the visual layer stack and decides what it shows.
+## Visual director: builds the visual layer stack and shows ONE global look.
 ##
-## Effective look = preset (global, the song's own, or chosen automatically)
-##                  x per-song adjustments (colours, intensity, glow, motion, density, sensitivity)
-##                  x automatic personality modifiers (auto mode only, changing slowly).
-## Also handles preset transitions, track notifications, toasts, screenshots, the
-## diagnostics overlay (F3), cursor hiding and preset hotkeys (1-9, [ and ]).
+## The look (visualizers, colours, effects, background) is global: changing songs or moods
+## never changes it. It is saved in visualizer.json and restored at launch. Presets are
+## optional starting points chosen by hand (Visualizers tab, keys 1-9, [ and ]).
+## Also handles track notifications, toasts, screenshots, the diagnostics overlay (F3)
+## and cursor hiding.
 
 signal preset_changed(preset_name: String)
 signal working_changed
@@ -16,32 +16,23 @@ const Presets := preload("res://presets.gd")
 const LIGHT_FONT := preload("res://Font/LEMONMILK-Light.otf")
 const BOLD_FONT := preload("res://Font/LEMONMILK-Bold.otf")
 const GOLD := Color(0.96, 0.82, 0.52)
-const SONG_KEYS := ["preset_mode", "preset", "color", "color2", "sensitivity", "glow", "bg_motion", "particle_density", "intensity", "background"]
 
 @onready var audio: Node = $"../Audio"
 @onready var background: ColorRect = $"../Background"
 @onready var visuals: Control = $"../Visuals"
-@onready var dancer: Control = $"../Dancer"
 @onready var music: AudioStreamPlayer = $"../Music"
 @onready var ui: Control = $"../UI"
 
 var presets := Presets.new()
 var layers := {}  # role -> layer node
-var working := {}  # The preset currently on screen (Studio edits change this live).
+var working := {}  # The global look on screen (edits change it live and are saved).
 var working_name := ""
-var source := "global"  # global | song | auto
-var auto_choice := ""
-var auto_reason := ""
-var mods := {"speed": 1.0, "glow": 1.0, "density": 1.0, "intensity": 1.0, "motion": 1.0}
-var mods_target := mods.duplicate()
+var look_path := ""
 var color_a := Color(1.0, 0.82, 0.45)
 var color_b := Color(0.8, 0.5, 0.32)
 var palette: Array = []  # 7 element colours on screen (blending toward the target)
-const DANCER_LIGHTS := 10
-var _light_pos := PackedVector2Array()
-var _light_col := PackedColorArray()
 var _tween: Tween
-var _auto_timer := 0.0
+var _save_timer := -1.0
 var _cursor_idle := 0.0
 var _diag_timer := 0.0
 
@@ -63,6 +54,7 @@ func _ready() -> void:
 	background.audio = audio
 	background.fallback_procedural = music.app_setting("fallback_procedural", false)
 	presets.load_file(music.base_dir.path_join("presets.json"))
+	look_path = music.base_dir.path_join("visualizer.json")
 
 	for role in ["atmosphere", "secondary", "main", "beatlight"]:
 		var layer: Control = Layer.new()
@@ -71,80 +63,41 @@ func _ready() -> void:
 		visuals.add_child(layer)
 		layers[role] = layer
 
-	_setup_dancer()
 	_build_hud()
 	music.track_changed.connect(_on_track_changed)
-	music.moods_changed.connect(_on_moods_changed)
 	music.notice.connect(show_toast)
 	get_viewport().size_changed.connect(func(): working_changed.emit())
+	apply_preset(_load_look(), false)
+	apply_background()
 	_on_track_changed(music.current)
 
 
-# --- Presets ------------------------------------------------------------------------
+# --- The global look ------------------------------------------------------------------
 
-## Mood settings edited while that mood plays take effect right away (look, dancer).
-func _on_moods_changed() -> void:
-	if not music.playing_mood_data().is_empty() and not working.is_empty():
-		apply_dancer_settings()
-
-
-func global_preset_name() -> String:
-	var n: String = music.app_setting("preset", "Seven Souls")
-	return n if n in presets.names() else presets.names()[0]
-
-
-## A look setting: from the playing mood when the song was started from a mood, else the
-## legacy per-song settings (All Music). Per-song data is kept but no longer required.
-func look(key: String, fallback: Variant) -> Variant:
-	var m: Dictionary = music.playing_mood_data()
-	if m.is_empty():
-		return music.song_setting(key, fallback)
-	match key:
-		"color":
-			return Color(m.colors[0]) if m.colors.size() >= 2 else fallback
-		"color2":
-			return Color(m.colors[1]) if m.colors.size() >= 2 else fallback
-		"palette":
-			return m.palette if m.palette.size() == 7 else fallback
-		"sensitivity":
-			return float(m.sensitivity)
-		"intensity":
-			return float(m.intensity)
-		"bg_motion":
-			return float(m.motion)
-	return fallback
+## The saved look; on first run after an update, the preset that used to be global.
+func _load_look() -> Dictionary:
+	var data = JSON.parse_string(FileAccess.get_file_as_string(look_path)) if FileAccess.file_exists(look_path) else null
+	if data is Dictionary and data.get("look") is Dictionary:
+		return data.look
+	var old := str(music.app_setting("preset", "Seven Souls"))
+	if music.settings.has_section_key(music.APP, "preset"):
+		music.settings.erase_section_key(music.APP, "preset")
+		music.settings.save(music.config_path)
+	return presets.get_preset(old if old in presets.names() else presets.names()[0])
 
 
-## The preset the current song should use: the playing mood decides (Fixed, or Auto
-## Variation among its presets without repeating the previous look); else per-song/global.
-func _resolve_preset() -> Dictionary:
-	var m: Dictionary = music.playing_mood_data()
-	if not m.is_empty():
-		source = "mood"
-		var names: Array = Array(m.presets).filter(func(n): return n in presets.names())
-		if names.is_empty():
-			names = [global_preset_name()]
-		var pick: String = names[0]
-		if m.variation == "fixed" or names.size() == 1:
-			if str(m.preset) in names:
-				pick = m.preset
-		else:
-			var choices := names.filter(func(n): return n != working_name)
-			pick = choices[randi() % choices.size()] if not choices.is_empty() else names[0]
-		return presets.get_preset(pick)
-	source = str(music.song_setting("preset_mode", "global"))
-	if source == "song":
-		var p := presets.get_preset(str(music.song_setting("preset", "")))
-		if not p.is_empty():
-			return p
-		source = "global"
-	if source == "auto" and auto_choice != "":
-		var p := presets.get_preset(auto_choice)
-		if not p.is_empty():
-			return p
-	return presets.get_preset(global_preset_name())
+func _save_look() -> void:
+	var f := FileAccess.open(look_path, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify({"schema": 1, "look": working}, "\t"))
 
 
+func _exit_tree() -> void:
+	if _save_timer >= 0.0:
+		_save_look()
+
+
+## Applies a look (a preset chosen by hand, or the saved look) as the global look.
 func apply_preset(p: Dictionary, animate := true) -> void:
 	if p.is_empty():
 		return
@@ -159,6 +112,7 @@ func apply_preset(p: Dictionary, animate := true) -> void:
 		_tween.tween_property(visuals, "modulate:a", 1.0, 0.9)
 	else:
 		_apply_modes()
+	_save_timer = 1.0
 	preset_changed.emit(working_name)
 	working_changed.emit()
 
@@ -175,13 +129,13 @@ func _apply_modes() -> void:
 	layers.secondary.set_blend(sec_cfg.additive)
 	layers.atmosphere.set_mode(working.atmosphere.mode)
 	layers.atmosphere.set_blend(true)
-	layers.beatlight.set_mode("beatlight" if float(working.beat_light) > 0.0 and music.app_setting("beat_light", true) else "none")
+	layers.beatlight.set_mode("beatlight" if float(working.beat_light) > 0.0 else "none")
 	layers.beatlight.set_blend(true)
 	background.fx = working.background.duplicate()
 
 
-## Live edit from the Studio: section ("main", "secondary", "atmosphere", "background" or
-## "" for top-level keys), key and value. Changes show immediately.
+## Live edit: section ("main", "secondary", "atmosphere", "background" or "" for top-level
+## keys), key and value. Changes show immediately and are saved as the global look.
 func edit(section: String, key: String, value: Variant) -> void:
 	if section == "":
 		working[key] = value
@@ -189,7 +143,20 @@ func edit(section: String, key: String, value: Variant) -> void:
 		working[section][key] = value
 	if key in ["mode", "additive", "beat_light"] or section == "background":
 		_apply_modes()
+	_save_timer = 1.0
 	working_changed.emit()
+
+
+## The global background image (a file in backgrounds/, or "" for the default).
+func apply_background() -> void:
+	var bg := str(music.app_setting("background", ""))
+	var path: String = music.backgrounds_dir.path_join(bg)
+	background.show_image(path if bg != "" and FileAccess.file_exists(path) else "")
+
+
+func set_background(file: String) -> void:
+	music.set_app_setting("background", file)
+	apply_background()
 
 
 func preview(preset_name: String) -> void:
@@ -206,6 +173,7 @@ func save_working(as_name := "") -> String:
 	presets.save_preset(p)
 	working_name = p.name
 	working.name = p.name
+	_save_timer = 1.0
 	preset_changed.emit(working_name)
 	show_toast("Saved preset " + working_name)
 	return working_name
@@ -216,46 +184,24 @@ func duplicate_working() -> String:
 
 
 func rename_working(new_name: String) -> bool:
-	var old := working_name
-	if not presets.rename_preset(old, new_name):
+	if not presets.rename_preset(working_name, new_name):
 		return false
 	working_name = new_name
 	working.name = new_name
-	if music.app_setting("preset", "") == old:
-		music.set_app_setting("preset", new_name)
+	_save_timer = 1.0
 	preset_changed.emit(working_name)
 	return true
 
 
 func delete_working() -> void:
 	presets.delete_preset(working_name)
-	apply_preset(presets.get_preset(global_preset_name()))
+	apply_preset(presets.get_preset(presets.names()[0]))
 
 
 func restore_builtins() -> void:
 	presets.restore_builtins()
-	apply_preset(presets.get_preset(global_preset_name()))
+	preset_changed.emit(working_name)
 	show_toast("Built-in presets restored")
-
-
-func set_global(preset_name: String) -> void:
-	music.set_app_setting("preset", preset_name)
-	show_toast("Global preset: " + preset_name)
-	if source == "global":
-		apply_preset(presets.get_preset(preset_name))
-
-
-func assign_to_song(preset_name: String) -> void:
-	music.set_song_setting("preset", preset_name)
-	music.set_song_setting("preset_mode", "song")
-	show_toast("Preset for this song: " + preset_name)
-	apply_preset(presets.get_preset(preset_name))
-
-
-func set_song_mode(mode: String) -> void:
-	music.set_song_setting("preset_mode", mode if mode != "global" else null)
-	auto_choice = ""
-	apply_preset(_resolve_preset())
 
 
 func cycle_preset(step: int) -> void:
@@ -265,79 +211,9 @@ func cycle_preset(step: int) -> void:
 	show_toast("Preset: " + working_name)
 
 
-# --- Song changes and automatic atmosphere -------------------------------------------
-
+## Song changes only show the track pop-up: the look stays exactly as it is.
 func _on_track_changed(_index: int) -> void:
-	audio.reset_song_stats()
-	audio.song_sensitivity = float(look("sensitivity", 1.0))
-	auto_choice = ""
-	auto_reason = ""
-	mods_target = {"speed": 1.0, "glow": 1.0, "density": 1.0, "intensity": 1.0, "motion": 1.0}
-	var p := _resolve_preset()
-	if p.name != working_name or working.is_empty():
-		apply_preset(p, not working.is_empty())
-	var bg := _pick_background()
-	background.show_image(music.backgrounds_dir.path_join(bg) if bg != "" and FileAccess.file_exists(music.backgrounds_dir.path_join(bg)) else "")
-	apply_dancer_settings()
 	_show_notification()
-
-
-var _last_mood_bg := ""
-
-
-## Mood backgrounds rotate per song (never the same one twice in a row); missing files are
-## skipped. Outside a mood: the song's own background, if any.
-func _pick_background() -> String:
-	var m: Dictionary = music.playing_mood_data()
-	if m.is_empty():
-		return str(music.song_setting("background", ""))
-	var bgs: Array = Array(m.backgrounds).filter(func(b): return FileAccess.file_exists(music.backgrounds_dir.path_join(b)))
-	if bgs.is_empty():
-		return ""
-	var choices := bgs.filter(func(b): return b != _last_mood_bg)
-	_last_mood_bg = choices[randi() % choices.size()] if not choices.is_empty() else bgs[0]
-	return _last_mood_bg
-
-
-## Derives modifiers and (once per song) a fitting preset from what the song actually
-## sounds like so far. Changes are gentle: modifiers ease in, the preset switches once.
-func _update_auto() -> void:
-	var traits: Dictionary = audio.personality()
-	if traits.is_empty():
-		return
-	var rate: float = traits.onset_rate
-	var dyn: float = traits.dynamics
-	mods_target = {
-		"speed": clampf(0.75 + rate * 0.12, 0.7, 1.4),
-		"glow": clampf(0.85 + dyn * 1.5, 0.8, 1.4),
-		"density": clampf(0.7 + traits.bass * 1.2, 0.7, 1.4),
-		"intensity": clampf(0.85 + dyn * 2.0, 0.8, 1.5),
-		"motion": clampf(0.7 + traits.loudness * 0.6, 0.6, 1.3),
-	}
-	if auto_choice != "":
-		return
-	if rate < 0.6 and dyn < 0.12:
-		auto_choice = "Midnight Aurora"
-		auto_reason = "spacious and calm"
-	elif traits.bass > 0.42:
-		auto_choice = "Stellar Drift"
-		auto_reason = "bass-heavy"
-	elif rate > 2.0 and traits.treble > 0.22:
-		auto_choice = "Neon Pulse"
-		auto_reason = "bright and rhythmic"
-	elif rate > 1.4:
-		auto_choice = "Clockwork Heart"
-		auto_reason = "steady rhythm"
-	elif traits.loudness < 0.3:
-		auto_choice = "Almost Nothing"
-		auto_reason = "very quiet"
-	else:
-		auto_choice = "Seven Souls"
-		auto_reason = "warm and melodic"
-	if not (auto_choice in presets.names()):
-		auto_choice = global_preset_name()
-	if source == "auto" and auto_choice != working_name:
-		apply_preset(presets.get_preset(auto_choice))
 
 
 # --- Per frame ----------------------------------------------------------------------
@@ -346,50 +222,38 @@ func _process(delta: float) -> void:
 	delta = minf(delta, 0.1)
 	if working.is_empty():
 		return
-	_auto_timer += delta
-	if _auto_timer > 2.0:
-		_auto_timer = 0.0
-		if music.playing_mood_data().is_empty() and str(music.song_setting("preset_mode", "global")) == "auto":
-			_update_auto()
-	for k in mods:
-		mods[k] = Common.approach(mods[k], mods_target[k] if source == "auto" else 1.0, 0.4, delta)
+	if _save_timer >= 0.0:
+		_save_timer -= delta
+		if _save_timer < 0.0:
+			_save_look()
 
-	# Colours: song colours override the preset's; changes blend over ~1.5 s.
-	var pc = look("color", null)
-	var sc = look("color2", null)
-	var target_a: Color = pc if pc is Color else Color(working.colors[0])
-	var target_b: Color = sc if sc is Color else Color(working.colors[1])
-	color_a = color_a.lerp(target_a, 1.0 - exp(-2.0 * delta))
-	color_b = color_b.lerp(target_b, 1.0 - exp(-2.0 * delta))
+	# Colour changes blend over ~1.5 s.
+	var rate := 1.0 - exp(-2.0 * delta)
+	color_a = color_a.lerp(Color(working.colors[0]), rate)
+	color_b = color_b.lerp(Color(working.colors[1]), rate)
 	background.set_palette(color_a, color_b)
-	# Element palette: the song's own palette if saved, else the preset's.
-	var song_pal = look("palette", null)
-	var pal_src: Array = song_pal if song_pal is Array and song_pal.size() == 7 else working.get("palette", Presets.PALETTE)
+	var pal_src: Array = working.get("palette", Presets.PALETTE)
 	if palette.size() != 7:
 		palette = pal_src.map(func(c): return Color(c))
 	for k in 7:
-		palette[k] = (palette[k] as Color).lerp(Color(pal_src[k]), 1.0 - exp(-2.0 * delta))
-	background.motion_scale = float(look("bg_motion", 1.0)) * mods.motion
+		palette[k] = (palette[k] as Color).lerp(Color(pal_src[k]), rate)
 
-	var s_int := float(look("intensity", 1.0))
-	var s_glow := float(music.song_setting("glow", 1.0))
-	var s_density := float(music.song_setting("particle_density", 1.0))
 	for role in ["main", "secondary", "atmosphere"]:
 		var cfg: Dictionary = working[role]
 		var layer: Control = layers[role]
 		layer.opacity = float(cfg.opacity) if role != "secondary" else minf(float(cfg.opacity), 0.8)
 		layer.scale_factor = float(cfg.scale)
-		layer.intensity = float(cfg.intensity) * s_int * mods.intensity
-		layer.speed = float(cfg.speed) * mods.speed
-		layer.glow = float(cfg.glow) * s_glow * mods.glow
+		layer.intensity = float(cfg.intensity)
+		layer.speed = float(cfg.speed)
+		layer.glow = float(cfg.glow)
 		layer.trail = float(cfg.trail)
-		layer.density = s_density * mods.density * (0.6 if role == "secondary" else 1.0)
+		layer.density = 0.6 if role == "secondary" else 1.0
 		layer.primary = color_a
 		layer.secondary = color_b
 		layer.cfg = cfg
 		layer.palette = palette
 	var bl: Control = layers.beatlight
-	bl.intensity = float(working.beat_light) * float(music.app_setting("beat_light_strength", 1.0))
+	bl.intensity = float(working.beat_light)
 	bl.primary = color_a
 
 	# The pop-up is for when the panel is hidden; the panel shows the title itself.
@@ -402,7 +266,6 @@ func _process(delta: float) -> void:
 		rec_label.text = "%s REC %d:%02d%s" % [dot, secs / 60, secs % 60, "" if music.rec_format == "" else "  " + music.rec_format.to_upper()]
 		rec_label.reset_size()
 		rec_label.position.x = hud.size.x - rec_label.size.x - 24
-	_update_dancer_lights(delta)
 	_update_cursor(delta)
 	if diag.visible:
 		_diag_timer += delta
@@ -444,75 +307,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		if i < names.size():
 			preview(names[i])
 			show_toast("Preset: " + names[i])
-
-
-# --- Dancing companion ---------------------------------------------------------------------
-
-const DANCERS_README := """TinserBox dancing companions
-============================
-Put each dancer in its own folder here, e.g. dancers/Robot/, containing transparent PNG
-frames (played in filename order: frame01.png, frame02.png, ...) or a single PNG.
-Optional dancers/Robot/dancer.cfg:
-
-[dancer]
-fps=12          ; frames per second at about 120 BPM
-beat_sync=true  ; follow the music's tempo
-scale=1.0       ; size relative to the default
-
-Restart TinserBox, then pick the dancer in the Visualizer tab.
-"""
-
-
-func _setup_dancer() -> void:
-	dancer.audio = audio
-	dancer.dancers_dir = music.base_dir.path_join("dancers")
-	DirAccess.make_dir_recursive_absolute(dancer.dancers_dir)
-	var readme: String = dancer.dancers_dir.path_join("README.txt")
-	if not FileAccess.file_exists(readme):
-		var f := FileAccess.open(readme, FileAccess.WRITE)
-		if f:
-			f.store_string(DANCERS_README)
-	_light_pos.resize(DANCER_LIGHTS)
-	_light_col.resize(DANCER_LIGHTS)
-	apply_dancer_settings()
-
-
-## Dancer settings are app-wide and independent of the visualizer preset.
-func apply_dancer_settings() -> void:
-	dancer.light_strength = float(music.app_setting("dancer_light", 60.0)) / 100.0
-	dancer.size_mul = float(music.app_setting("dancer_size", 1.0))
-	var m: Dictionary = music.playing_mood_data()
-	if not m.is_empty():
-		# A mood decides its companion; none named means no dancer.
-		dancer.enabled = str(m.dancer) != ""
-		dancer.personality = str(m.personality)
-		if dancer.enabled:
-			dancer.set_character(str(m.dancer))
-		return
-	dancer.enabled = music.app_setting("dancer_enabled", false)
-	dancer.personality = str(music.app_setting("dancer_personality", "playful"))
-	dancer.set_character(str(music.app_setting("dancer_character", "Aria")))
-
-
-## The visualizers' own lights (main up to 7, second layer up to 3), smoothed so the
-## dancer's lighting glides instead of flickering.
-func _update_dancer_lights(delta: float) -> void:
-	if not dancer.enabled:
-		return
-	var src: Array = layers.main.light_sources().slice(0, 7) + layers.secondary.light_sources().slice(0, 3)
-	if src.is_empty():
-		# No visualizer: a soft fill from the palette, following the music.
-		var s := visuals.size if visuals.size.x > 0.0 else Vector2(800, 600)
-		for k in 3:
-			src.append([Vector2(s.x * (0.15 + 0.35 * k), s.y * 0.35), Color(palette[k * 3] if palette.size() == 7 else color_a, 0.2 + 0.4 * audio.loudness)])
-	var rate := 1.0 - exp(-6.0 * delta)
-	for i in DANCER_LIGHTS:
-		if i < src.size():
-			_light_pos[i] = _light_pos[i].lerp(src[i][0], rate) if _light_col[i].a > 0.01 else src[i][0]
-			_light_col[i] = _light_col[i].lerp(src[i][1], rate)
-		else:
-			_light_col[i] = _light_col[i].lerp(Color(_light_col[i], 0.0), rate)
-	dancer.set_lights(_light_pos, _light_col, DANCER_LIGHTS)
 
 
 # --- HUD: notifications, toasts, diagnostics ----------------------------------------
@@ -620,8 +414,7 @@ func _update_diag() -> void:
 		"analyzer: %s   silence %s   adaptive %s" % ["ok" if audio.available else "MISSING", audio.silence, audio.adaptive],
 		"bass %.2f  mid %.2f  treble %.2f  loud %.2f  delta %+.2f" % [audio.bass, audio.mid, audio.treble, audio.loudness, audio.energy_delta],
 		"onset %.2f  kick %.2f  snap %.2f  beats %d  ~%d bpm (estimate)" % [audio.onset, audio.kick, audio.snap, audio.beat_count, audio.tempo_bpm],
-		"preset: %s (%s)%s" % [working_name, source, ("  auto: %s, %s" % [auto_choice, auto_reason]) if auto_choice != "" else ""],
-		"song config: %s [%s]" % [music.config_path, music.current_path.get_file()],
+		"look: %s   config: %s" % [working_name, look_path],
 		"bus effects: %d" % AudioServer.get_bus_effect_count(0),
 	])
 

@@ -4,7 +4,7 @@ extends AudioStreamPlayer
 ## The playlist is built from the music folder (non-recursive, as before), extra folders
 ## added by the user (scanned recursively on a worker thread) and individually added or
 ## dropped files, minus tracks the user removed from the playlist (files are never deleted).
-## Per-song settings live in settings.cfg sections keyed by filename.
+## Moods are named playlists (moods.json). App settings live in settings.cfg.
 
 signal track_changed(index: int)
 signal playlist_changed
@@ -20,17 +20,10 @@ const IMAGE_EXTENSIONS := ["png", "jpg", "jpeg"]
 const SEEK_STEP := 5.0
 const VOLUME_STEP := 0.05
 const RESTART_DELAY := 2.0
-const APP := "_app"  # App-wide settings; song sections are keyed by filename.
+const APP := "_app"  # App-wide settings.
 const PLAYLIST := "_playlist"  # Playlist state.
 const SORTS := ["name", "name_desc", "artist", "modified"]
 const ALL_MUSIC := "All Music"  # The permanent library; moods are stored separately.
-## A mood: its songs (play order) and the look applied while it plays.
-const MOOD_DEFAULT := {
-	"tracks": [], "presets": [], "variation": "auto", "preset": "",
-	"colors": [], "palette": [], "backgrounds": [],
-	"sensitivity": 1.0, "intensity": 1.0, "motion": 1.0,
-	"dancer": "", "personality": "playful",
-}
 const EQ_BANDS := [60.0, 150.0, 400.0, 1000.0, 2400.0, 6000.0, 15000.0]
 const EQ21_HZ := [22, 32, 44, 63, 90, 125, 175, 250, 350, 500, 700, 1000, 1400, 2000, 2800, 4000, 5600, 8000, 11000, 16000, 22000]
 const MEDIA_HELPER := "TinserBoxMedia.exe"
@@ -45,9 +38,9 @@ var backgrounds_dir := base_dir.path_join("backgrounds")
 var config_path := base_dir.path_join("settings.cfg")
 var playlists_path := base_dir.path_join("playlists.json")  # Legacy, read once for migration.
 var moods_path := base_dir.path_join("moods.json")
-var moods := {}  # name -> mood dictionary (see MOOD_DEFAULT); dictionary order = display order
+var moods := {}  # name -> {"tracks": [paths in play order]}; dictionary order = display order
 var active_mood := ALL_MUSIC  # The mood being browsed (its songs feed Next/Shuffle/Repeat).
-var playing_mood := ALL_MUSIC  # The mood the playing song was started from (drives the look).
+var playing_mood := ALL_MUSIC  # The mood the playing song was started from.
 var settings := ConfigFile.new()
 
 var tracks: Array[String] = []  # Current playlist (absolute paths) in display order.
@@ -119,6 +112,7 @@ func _ready() -> void:
 				DirAccess.copy_absolute(exe_dir.path_join(folder).path_join(file), base_dir.path_join(folder).path_join(file))
 	if FileAccess.file_exists(config_path):
 		settings.load(config_path)
+		_drop_song_sections()
 	else:
 		settings.save(config_path)
 
@@ -341,13 +335,24 @@ func add_paths(paths: PackedStringArray) -> void:
 
 # --- Moods ------------------------------------------------------------------------------
 
-func _new_mood(tracks: Array = []) -> Dictionary:
-	var m: Dictionary = MOOD_DEFAULT.duplicate(true)
-	m.tracks = tracks.duplicate()
-	m.presets = [str(app_setting("preset", "Seven Souls"))]
-	return m
+## Older versions stored per-song looks as sections named after songs. Visuals are now
+## global, so those sections are removed (app settings and playlist state are kept).
+func _drop_song_sections() -> void:
+	var dropped := false
+	for section in settings.get_sections():
+		if section != APP and section != PLAYLIST:
+			settings.erase_section(section)
+			dropped = true
+	for key in ["dancer_enabled", "dancer_character", "dancer_personality", "dancer_light", "dancer_size", "beat_light", "beat_light_strength"]:
+		if settings.has_section_key(APP, key):
+			settings.erase_section_key(APP, key)
+			dropped = true
+	if dropped:
+		settings.save(config_path)
 
 
+## Moods are named playlists: songs in play order, nothing else. Older look settings in
+## moods.json are ignored and dropped on the next save.
 func _load_moods() -> void:
 	moods = {}
 	if FileAccess.file_exists(moods_path):
@@ -355,11 +360,7 @@ func _load_moods() -> void:
 		if data is Dictionary:
 			for m in data.get("moods", []):
 				if m is Dictionary and str(m.get("name", "")).strip_edges() != "":
-					var mood: Dictionary = MOOD_DEFAULT.duplicate(true)
-					mood.merge(m, true)
-					mood.erase("name")
-					mood.tracks = Array(mood.tracks).map(func(t): return str(t))
-					moods[str(m.name)] = mood
+					moods[str(m.name)] = {"tracks": Array(m.get("tracks", [])).map(func(t): return str(t))}
 			active_mood = str(data.get("active", ALL_MUSIC))
 	elif FileAccess.file_exists(playlists_path):
 		_migrate_playlists()
@@ -369,39 +370,14 @@ func _load_moods() -> void:
 
 
 ## One-time migration: every playlist becomes a mood with the same name, songs and order.
-## playlists.json is left untouched. Per-song looks of its songs (presets, backgrounds,
-## colours) become the mood's look where they agree; nothing is deleted from settings.cfg.
+## playlists.json is left untouched.
 func _migrate_playlists() -> void:
 	var data = JSON.parse_string(FileAccess.get_file_as_string(playlists_path))
 	if not (data is Dictionary):
 		return
 	for p in data.get("playlists", []):
-		if not (p is Dictionary) or str(p.get("name", "")).strip_edges() == "":
-			continue
-		var tracks: Array = Array(p.get("tracks", [])).map(func(t): return str(t))
-		var mood := _new_mood(tracks)
-		var presets := []
-		var bgs := []
-		var colors := {}
-		for t in tracks:
-			var section: String = t.get_file()
-			if settings.get_value(section, "preset_mode", "") == "song" and settings.has_section_key(section, "preset"):
-				var pr := str(settings.get_value(section, "preset"))
-				if not (pr in presets):
-					presets.append(pr)
-			if settings.has_section_key(section, "background"):
-				var bg := str(settings.get_value(section, "background"))
-				if not (bg in bgs):
-					bgs.append(bg)
-			var c = settings.get_value(section, "color", null) if settings.has_section_key(section, "color") else null
-			if c is Color:
-				colors["#" + c.to_html(false)] = true
-		if not presets.is_empty():
-			mood.presets = presets
-		mood.backgrounds = bgs
-		if colors.size() == 1:
-			mood.colors = [colors.keys()[0], "#cc8052"]
-		moods[str(p.name)] = mood
+		if p is Dictionary and str(p.get("name", "")).strip_edges() != "":
+			moods[str(p.name)] = {"tracks": Array(p.get("tracks", [])).map(func(t): return str(t))}
 	active_mood = str(data.get("active", ALL_MUSIC))
 	_save_moods()
 	notice.emit("Your playlists are now moods")
@@ -410,12 +386,10 @@ func _migrate_playlists() -> void:
 func _save_moods() -> void:
 	var list := []
 	for n in moods:
-		var m: Dictionary = moods[n].duplicate(true)
-		m.name = n
-		list.append(m)
+		list.append({"name": n, "tracks": moods[n].tracks})
 	var f := FileAccess.open(moods_path, FileAccess.WRITE)
 	if f:
-		f.store_string(JSON.stringify({"schema": 1, "active": active_mood, "moods": list}, "\t"))
+		f.store_string(JSON.stringify({"schema": 2, "active": active_mood, "moods": list}, "\t"))
 	moods_changed.emit()
 
 
@@ -427,16 +401,11 @@ func mood(mood_name: String) -> Dictionary:
 	return moods.get(mood_name, {})
 
 
-## The mood whose look applies now (empty when playing from All Music).
-func playing_mood_data() -> Dictionary:
-	return moods.get(playing_mood, {})
-
-
 func create_mood(mood_name: String) -> bool:
 	var n := mood_name.strip_edges()
 	if n == "" or n == ALL_MUSIC or moods.has(n):
 		return false
-	moods[n] = _new_mood()
+	moods[n] = {"tracks": []}
 	_save_moods()  # The browsed list stays, so its songs can be dropped onto the new mood.
 	return true
 
@@ -541,12 +510,6 @@ func move_in_mood(from_index: int, to_index: int) -> void:
 	list.insert(clampi(to_index, 0, list.size()), item)
 	_save_moods()
 	_rebuild(current_path)
-
-
-func set_mood_value(mood_name: String, key: String, value: Variant) -> void:
-	if moods.has(mood_name):
-		moods[mood_name][key] = value
-		_save_moods()
 
 
 ## In All Music: removes songs from the library view (files stay on disk, restored if added
@@ -839,19 +802,6 @@ func list_backgrounds() -> Array[String]:
 			files.append(file)
 	files.sort()
 	return files
-
-
-## Per-song settings for the current track, keyed by its filename.
-func song_setting(key: String, fallback: Variant) -> Variant:
-	var section := current_path.get_file()
-	return settings.get_value(section, key) if current_path != "" and settings.has_section_key(section, key) else fallback
-
-
-## Passing null removes the setting.
-func set_song_setting(key: String, value: Variant) -> void:
-	if current_path != "":
-		settings.set_value(current_path.get_file(), key, value)
-		settings.save(config_path)
 
 
 func app_setting(key: String, fallback: Variant) -> Variant:
@@ -1213,8 +1163,7 @@ func _push_pcm(packet: PackedByteArray) -> void:
 	capture_playback.push_buffer(_pcm)
 
 
-## The song another app is playing becomes TinserBox's "current song": pop-up, per-song
-## looks (section "Artist - Title" in settings.cfg) and automatic atmosphere all apply.
+## The song another app is playing becomes TinserBox's "current song" (title pop-up).
 func _set_system_track(title: String, artist: String) -> void:
 	var label := title if artist == "" else "%s - %s" % [artist, title]
 	label = label.replace("/", "-").replace("\\", "-").strip_edges()

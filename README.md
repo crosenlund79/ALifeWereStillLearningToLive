@@ -5,19 +5,20 @@ A Godot 4.3 music player and audio-reactive visualizer.
 Ten visualizers (Multi-Waveform, Square Grid, Retro Spectrum, The Aurora, Particle Universe,
 Resonance Engine, The Seven Spirits, Harmonic Ribbons, Pulse Rings, Northern Lights), each with
 its own settings and fully customizable colours, can be layered with an
-atmosphere and a beat light over an animated background, saved as presets, and assigned per
-song or chosen automatically from how a song sounds.
+atmosphere and a beat light over an animated background. The look is global: songs and moods
+never change it. Moods are simple named playlists.
 
 ## Architecture
 
 - `audio_reactive.gd` - the single analysis service (EQ -> spectrum analyzer on the Master bus):
-  bands, loudness, peaks, silence, onset/kick/snap/beat detection, song personality.
+  bands, loudness, peaks, silence, onset/kick/snap/beat detection.
 - `vis/visual_layer.gd` + renderers in `vis/` - custom-drawn visualizers reading that service.
 - `vis/background.gd` + `background.gdshader` - crossfading, Ken Burns, bloom, blur, procedural fallback.
 - `presets.gd` - built-in and user presets (`presets.json`, schema 1).
-- `director.gd` - applies presets, mood looks (auto variation per song), legacy per-song looks and automatic atmosphere; screenshots, pop-ups, diagnostics.
-- `music.gd` - library, moods (`moods.json`; old playlists migrate once), playback, settings, media keys.
-  `ui.gd` - the overlay (Moods, Mood Look, Visualizer, Equalizer, Settings).
+- `director.gd` - the one global look (`visualizer.json`; presets are loaded only by hand),
+  global background; screenshots, pop-ups, diagnostics.
+- `music.gd` - library, moods (`moods.json`, named playlists; old playlists migrate once),
+  playback, settings, media keys. `ui.gd` - the overlay (Music, Visualizers, Audio, Settings).
 
 ## Where music, backgrounds and settings live
 
@@ -27,25 +28,18 @@ song or chosen automatically from how a song sounds.
 | Portable (`TinserBox_Portable_Win64.zip`) | next to `TinserBox.exe` |
 | Installed (`TinserBox_Setup_Win64.exe`) | `Documents\TinserBox\` (seeded with the bundled songs on first launch; kept on update/uninstall) |
 
-Alongside: `screenshots/` and `presets.json`.
+Alongside: `screenshots/`, `recordings/`, `moods.json`, `visualizer.json` and `presets.json`.
 
 Drop MP3/OGG/WAV files into `music/` and PNG/JPG files into `backgrounds/`, then restart.
-Missing folders are created automatically. `settings.cfg` is plain text: one section per
-song filename (`background`, `color`) plus `[_app]` for EQ, sensitivity, volume, shuffle and repeat.
-
-## Dancing companions
-
-An optional dancer (`vis/dancer.gd`) is drawn between the visualizers and the UI, lit by the
-visualizers' own lights (each renderer can report `light_sources()`; `vis/dancer_light.gdshader`
-adds colour fill and rim light). Built-in: Aria (`vis/dancer_figure.gd`: bar-based choreography, springs, five personalities);
-moods pick the dancer and personality; add sprite dancers in `dancers/`.
+Missing folders are created automatically. `settings.cfg` is plain text: `[_app]` (EQ,
+sensitivity, volume, shuffle, repeat, background, ...) and `[_playlist]` (library state).
+Per-song sections from older versions are removed at launch; music, moods and recordings are kept.
 
 ## Visualizing Spotify and other apps (Windows)
 
-Settings → Audio source → System audio. `TinserBoxMedia.exe` captures the default output
+Audio → Audio source → System audio. `TinserBoxMedia.exe` captures the default output
 device (WASAPI loopback) and streams it to TinserBox, which analyses it on a silent
-`Capture` bus. Title/artist come from Windows' media sessions, so per-song looks work for
-those songs (`settings.cfg` section `Artist - Title`).
+`Capture` bus. Title/artist come from Windows' media sessions (shown in the pop-up).
 
 ## Shortcuts
 

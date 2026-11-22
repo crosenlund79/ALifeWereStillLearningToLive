@@ -1,6 +1,6 @@
 extends Control
-## TinserBox overlay: moods (music + look), Visualizer Studio, equalizer, mood look and app
-## settings, plus the transport bar. Fades after inactivity; Esc hides it until the next
+## TinserBox overlay: four tabs (Music, Visualizers, Audio, Settings) plus the transport
+## bar. Fades after inactivity; Esc hides it until the next
 ## activity; H hides it until H is pressed again (saved).
 
 const Common := preload("res://vis/common.gd")
@@ -14,7 +14,6 @@ const LIGHT_FONT := preload("res://Font/LEMONMILK-Light.otf")
 const BOLD_FONT := preload("res://Font/LEMONMILK-Bold.otf")
 const EQ_LABELS := ["60", "150", "400", "1k", "2.4k", "6k", "15k"]
 const SORT_LABELS := ["Name A-Z", "Name Z-A", "Artist", "Recently changed"]
-const SONG_MODES := ["global", "song", "auto"]
 
 @onready var music = $"../Music"
 @onready var director = $"../Director"
@@ -35,9 +34,7 @@ var context_row := -1
 var mood_list := ItemList.new()
 var mood_name_edit := LineEdit.new()
 var moods_menu := PopupMenu.new()  # Checkable mood tags for the selected songs.
-var look_box: VBoxContainer
-var look_for := "\u0001"
-var _thumbs := {}
+var background_select := OptionButton.new()
 # Mini player (Ctrl+M): compact, borderless, always on top. Never restored at launch.
 const MINI_SIZE := Vector2i(400, 300)
 var mini := false
@@ -111,10 +108,9 @@ func _ready() -> void:
 	tabs.focus_mode = FOCUS_NONE
 	tabs.get_tab_bar().focus_mode = FOCUS_NONE
 	box.add_child(tabs)
-	_build_moods_tab(tabs)
-	_build_mood_look_tab(tabs)
-	_build_studio_tab(tabs)
-	_build_eq_tab(tabs)
+	_build_music_tab(tabs)
+	_build_visualizers_tab(tabs)
+	_build_audio_tab(tabs)
 	_build_settings_tab(tabs)
 
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -158,10 +154,11 @@ func _ready() -> void:
 
 # --- Tabs ---------------------------------------------------------------------------
 
-## Moods: the mood list (left) and the songs of the browsed mood or All Music (right).
-func _build_moods_tab(tabs: TabContainer) -> void:
+## Music: All Music and the moods (named playlists) on the left, the songs of the browsed
+## one on the right.
+func _build_music_tab(tabs: TabContainer) -> void:
 	var tab := VBoxContainer.new()
-	tab.name = "Moods"
+	tab.name = "Music"
 	tab.add_theme_constant_override("separation", 8)
 	tabs.add_child(tab)
 	var split := HBoxContainer.new()
@@ -175,7 +172,6 @@ func _build_moods_tab(tabs: TabContainer) -> void:
 	split.add_child(left)
 	mood_list.focus_mode = FOCUS_NONE
 	mood_list.size_flags_vertical = SIZE_EXPAND_FILL
-	mood_list.fixed_icon_size = Vector2i(34, 20)
 	mood_list.tooltip_text = "Click a mood to browse it (the playing song continues). Double-click, or Play this mood, to start it. Drop songs on a mood to add them; drag moods to reorder."
 	mood_list.item_selected.connect(func(i: int):
 		if not syncing:
@@ -193,7 +189,7 @@ func _build_moods_tab(tabs: TabContainer) -> void:
 	_button(mrow, "New", _on_new_mood, "Create a mood with the name typed above")
 	_button(mrow, "Rename", _on_rename_mood, "Rename the selected mood to the name typed above")
 	_button(mrow, "Delete", _on_delete_mood, "Delete the selected mood (its songs stay in All Music and on disk)")
-	var play_mood := _button(left, "Play this mood", music.play_mood, "Start playing the selected mood with its look")
+	var play_mood := _button(left, "Play this mood", music.play_mood, "Start playing the selected mood")
 	play_mood.size_flags_horizontal = SIZE_EXPAND_FILL
 
 	var right := VBoxContainer.new()
@@ -247,20 +243,22 @@ func _build_moods_tab(tabs: TabContainer) -> void:
 	delay_row.add_child(delay_value)
 
 
-func _build_studio_tab(tabs: TabContainer) -> void:
-	var col := _scroll_tab(tabs, "Visualizer")
+## Visualizers: one global look. Songs and moods never change it; presets are optional
+## starting points chosen by hand.
+func _build_visualizers_tab(tabs: TabContainer) -> void:
+	var col := _scroll_tab(tabs, "Visualizers")
 	var row1 := HBoxContainer.new()
 	row1.add_theme_constant_override("separation", 6)
 	col.add_child(row1)
 	preset_select.size_flags_horizontal = SIZE_EXPAND_FILL
 	preset_select.focus_mode = FOCUS_NONE
-	preset_select.tooltip_text = "Preview a preset (keys 1-9, [ and ] also switch presets)"
+	preset_select.tooltip_text = "Load a preset as the look (keys 1-9, [ and ] also switch presets)"
 	preset_select.item_selected.connect(func(i: int): director.preview(str(preset_select.get_item_metadata(i))))
 	row1.add_child(preset_select)
 	_button(row1, "Save", func(): director.save_working(), "Save changes to this preset")
 	_button(row1, "Duplicate", func(): director.duplicate_working(), "Save a copy of the current settings")
 	_button(row1, "Delete", func(): director.delete_working(), "Delete this preset (built-ins can be restored)")
-	_button(row1, "Reset", func(): director.restore_defaults(), "Discard unsaved changes")
+	_button(row1, "Reset", func(): director.restore_defaults(), "Go back to this preset as saved")
 
 	var row2 := HBoxContainer.new()
 	row2.add_theme_constant_override("separation", 6)
@@ -270,19 +268,13 @@ func _build_studio_tab(tabs: TabContainer) -> void:
 	row2.add_child(preset_name_edit)
 	_button(row2, "Save as", _on_save_as, "Save the current settings as a new preset")
 	_button(row2, "Rename", _on_rename, "Rename this preset (your own presets only)")
-	var row3 := HBoxContainer.new()
-	row3.add_theme_constant_override("separation", 6)
-	col.add_child(row3)
-	_button(row3, "Use globally", func(): director.set_global(director.working_name), "Use this preset for all songs that follow the global preset")
-	_button(row3, "Add to mood", _add_preset_to_mood, "Add this preset to the mood selected in the Moods tab")
-	_button(row3, "Restore built-ins", func(): director.restore_builtins(), "Bring back the original built-in presets")
+	_button(row2, "Restore built-ins", func(): director.restore_builtins(), "Bring back the original built-in presets")
 
 	var modes := Layer.MODE_NAMES
-	_build_dancer_section(col)
 
 	_section(col, "Main layer")
 	var g := _grid4(col)
-	var main_modes := {"none": "None (dancer only)"}
+	var main_modes := {"none": "None"}
 	main_modes.merge(modes)
 	_studio_option(g, "Visualizer", "main", "mode", main_modes)
 	_studio_slider(g, "Opacity", "main", "opacity", 0.0, 1.0)
@@ -318,7 +310,6 @@ func _build_studio_tab(tabs: TabContainer) -> void:
 	col_row.add_theme_constant_override("separation", 6)
 	col.add_child(col_row)
 	_button(col_row, "Reset colours", _reset_colours, "Restore this preset's original colours")
-	_button(col_row, "Use for this mood", _mood_colours.bind(true), "The mood selected in the Moods tab keeps these colours whatever preset it shows")
 
 	_section(col, "Second layer")
 	g = _grid4(col)
@@ -337,11 +328,17 @@ func _build_studio_tab(tabs: TabContainer) -> void:
 
 	_section(col, "Background")
 	g = _grid4(col)
+	_label(g, "Image")
+	background_select.tooltip_text = "The forest, a procedural backdrop, or a picture from the backgrounds folder"
+	background_select.focus_mode = FOCUS_NONE
+	background_select.item_selected.connect(_on_background_selected)
+	_fill(g, background_select)
+	_fill_backgrounds()
 	for item in [["Ken Burns", "kenburns"], ["Parallax", "parallax"], ["Breathing", "breathing"], ["Vignette", "vignette"],
 			["Dimming", "dim"], ["Colour wash", "wash"], ["Blur", "blur"], ["Bloom", "bloom"], ["Shimmer", "shimmer"]]:
 		_studio_slider(g, item[0], "background", item[1], 0.0, 1.0)
 
-	_section(col, "Audio response")
+	_section(col, "Response")
 	g = _grid4(col)
 	_label(g, "Sensitivity")
 	var sens := _slider(float(music.app_setting("sensitivity", 100.0)), 200.0, func(v: float):
@@ -359,62 +356,24 @@ func _build_studio_tab(tabs: TabContainer) -> void:
 	_fill(g, adaptive)
 
 
-## Dancing companion: independent of the visualizer and its presets (saved app-wide).
-func _build_dancer_section(col: VBoxContainer) -> void:
-	_section(col, "Dancing companion (All Music; moods choose their own)")
+## Audio: source, equalizer and recording.
+func _build_audio_tab(tabs: TabContainer) -> void:
+	var col := _scroll_tab(tabs, "Audio")
 	var g := _grid4(col)
-	_label(g, "Dancer")
-	var on := CheckButton.new()
-	on.button_pressed = music.app_setting("dancer_enabled", false)
-	on.tooltip_text = "Show a dancing companion in front of the visualizer (or alone, with Visualizer: None)"
-	on.toggled.connect(func(v: bool):
-		music.set_app_setting("dancer_enabled", v)
-		director.apply_dancer_settings())
-	_fill(g, on)
-	_label(g, "Character")
-	var pick := OptionButton.new()
-	var names: Array = director.dancer.list_characters()
-	for n in names:
-		pick.add_item(n)
-	pick.select(maxi(names.find(str(music.app_setting("dancer_character", "Aria"))), 0))
-	pick.tooltip_text = "Built-in companions, plus any dancers you put in the dancers folder (see README.txt there)"
-	pick.item_selected.connect(func(i: int):
-		music.set_app_setting("dancer_character", pick.get_item_text(i))
-		director.apply_dancer_settings())
-	_fill(g, pick)
-	_label(g, "Personality")
-	var pers := OptionButton.new()
-	for n in director.dancer.PERSONALITIES:
-		pers.add_item(n.capitalize())
-	pers.select(maxi(director.dancer.PERSONALITIES.find(str(music.app_setting("dancer_personality", "playful"))), 0))
-	pers.item_selected.connect(func(i: int):
-		music.set_app_setting("dancer_personality", director.dancer.PERSONALITIES[i])
-		director.apply_dancer_settings())
-	_fill(g, pers)
-	_label(g, "Lighting")
-	var light := _slider(float(music.app_setting("dancer_light", 60.0)), 100.0, func(v: float):
-		music.set_app_setting("dancer_light", v)
-		director.dancer.light_strength = v / 100.0)
-	light.tooltip_text = "How strongly the visualizer's colours light the dancer (0-100%)"
-	_fill(g, light)
-	_label(g, "Size")
-	var dsize := _slider(float(music.app_setting("dancer_size", 1.0)), 1.6, func(v: float):
-		music.set_app_setting("dancer_size", v)
-		director.dancer.size_mul = v)
-	dsize.min_value = 0.5
-	dsize.step = 0.05
-	_fill(g, dsize)
+	_label(g, "Audio source")
+	source_select.add_item("TinserBox player")
+	source_select.add_item("System audio")
+	source_select.tooltip_text = "System audio: visualize whatever Windows is playing (Spotify, a browser, games). Control playback in that app; the visuals follow."
+	source_select.item_selected.connect(func(i: int):
+		if not music.set_source(["player", "system"][i]):
+			source_select.select(0))
+	_fill(g, source_select)
 
-
-func _build_eq_tab(tabs: TabContainer) -> void:
-	var eq_box := VBoxContainer.new()
-	eq_box.name = "Equalizer"
-	tabs.add_child(eq_box)
+	_section(col, "Equalizer")
 	var bands := HBoxContainer.new()
-	bands.size_flags_vertical = SIZE_EXPAND_FILL
 	bands.alignment = BoxContainer.ALIGNMENT_CENTER
 	bands.add_theme_constant_override("separation", 22)
-	eq_box.add_child(bands)
+	col.add_child(bands)
 	var gains: Array = music.app_setting("eq_gains", [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 	for i in 7:
 		var column := VBoxContainer.new()
@@ -427,7 +386,7 @@ func _build_eq_tab(tabs: TabContainer) -> void:
 		s.max_value = 12.0
 		s.step = 0.5
 		s.value = gains[i]
-		s.size_flags_vertical = SIZE_EXPAND_FILL
+		s.custom_minimum_size.y = 120
 		s.size_flags_horizontal = SIZE_SHRINK_CENTER
 		s.focus_mode = FOCUS_NONE
 		s.value_changed.connect(_on_eq_changed.bind(value))
@@ -442,7 +401,7 @@ func _build_eq_tab(tabs: TabContainer) -> void:
 	var eq_row := HBoxContainer.new()
 	eq_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	eq_row.add_theme_constant_override("separation", 12)
-	eq_box.add_child(eq_row)
+	col.add_child(eq_row)
 	eq_toggle.text = "EQ On"
 	eq_toggle.focus_mode = FOCUS_NONE
 	eq_toggle.button_pressed = music.app_setting("eq_enabled", true)
@@ -453,232 +412,6 @@ func _build_eq_tab(tabs: TabContainer) -> void:
 	_button(eq_row, "Reset EQ", func():
 		for s in eq_sliders:
 			s.value = 0.0)
-
-
-func _build_mood_look_tab(tabs: TabContainer) -> void:
-	look_box = _scroll_tab(tabs, "Mood Look")
-
-
-## The browsed mood's look: presets (and variation), backgrounds, colours, energy, dancer.
-## Rebuilt when another mood is selected.
-func _rebuild_mood_look(force := false) -> void:
-	var mood_name: String = music.active_mood
-	if mood_name == look_for and not force:
-		return
-	look_for = mood_name
-	for c in look_box.find_children("*", "", true, false):
-		if c is OptionButton or c is ColorPickerButton:
-			popups.erase(c.get_popup())
-	for c in look_box.get_children():
-		c.queue_free()
-	if mood_name == music.ALL_MUSIC:
-		var hint := Label.new()
-		hint.text = "All Music has no mood look.\nSelect or create a mood in the Moods tab to give it presets,\ncolours, backgrounds and a dancing companion.\nSongs played from All Music use the global preset."
-		look_box.add_child(hint)
-		return
-	var m: Dictionary = music.mood(mood_name)
-	_section(look_box, "Look of " + mood_name)
-
-	var pg := GridContainer.new()
-	pg.columns = 3
-	pg.add_theme_constant_override("h_separation", 12)
-	look_box.add_child(pg)
-	for pname in director.presets.names():
-		var cb := CheckBox.new()
-		cb.text = pname
-		cb.focus_mode = FOCUS_NONE
-		cb.button_pressed = pname in m.presets
-		cb.toggled.connect(_on_mood_preset_toggled.bind(pname))
-		pg.add_child(cb)
-	var vg := _grid4(look_box)
-	_label(vg, "Variation")
-	var variation := OptionButton.new()
-	variation.add_item("Auto variation")
-	variation.add_item("Fixed")
-	variation.select(1 if m.variation == "fixed" else 0)
-	variation.tooltip_text = "Auto variation: a different preset from this mood for each song. Fixed: always the preset on the right."
-	variation.item_selected.connect(func(i: int): music.set_mood_value(mood_name, "variation", ["auto", "fixed"][i]))
-	_fill(vg, variation)
-	_label(vg, "Fixed preset")
-	var fixed := OptionButton.new()
-	for pname in m.presets:
-		fixed.add_item(pname)
-	fixed.select(maxi(Array(m.presets).find(m.preset), 0))
-	fixed.item_selected.connect(func(i: int): music.set_mood_value(mood_name, "preset", fixed.get_item_text(i)))
-	_fill(vg, fixed)
-	var save_row := HBoxContainer.new()
-	look_box.add_child(save_row)
-	_button(save_row, "Save current look to this mood", _save_look_to_mood, "Save what is on screen now (including Studio changes) as a preset of this mood")
-
-	_section(look_box, "Backgrounds (rotate per song)")
-	var bg_grid := GridContainer.new()
-	bg_grid.columns = 3
-	bg_grid.add_theme_constant_override("h_separation", 12)
-	look_box.add_child(bg_grid)
-	var bgs: Array = music.list_backgrounds()
-	if bgs.is_empty():
-		var none := Label.new()
-		none.text = "No images in the backgrounds folder: the forest is used."
-		bg_grid.add_child(none)
-	for f in bgs:
-		var cb := CheckBox.new()
-		cb.text = f.get_basename()
-		cb.focus_mode = FOCUS_NONE
-		cb.button_pressed = f in m.backgrounds
-		cb.toggled.connect(_on_mood_bg_toggled.bind(f))
-		bg_grid.add_child(cb)
-
-	_section(look_box, "Colours")
-	var cg := _grid4(look_box)
-	for idx in 2:
-		_label(cg, ["Main colour", "Second colour"][idx])
-		var picker := ColorPickerButton.new()
-		picker.edit_alpha = false
-		picker.focus_mode = FOCUS_NONE
-		picker.custom_minimum_size.y = 24
-		picker.color = Color(m.colors[idx]) if m.colors.size() >= 2 else Color(director.working.colors[idx])
-		picker.color_changed.connect(_on_mood_color.bind(idx))
-		popups.append(picker.get_popup())
-		_fill(cg, picker)
-	var crow := HBoxContainer.new()
-	crow.add_theme_constant_override("separation", 6)
-	look_box.add_child(crow)
-	_button(crow, "Use Studio colours", _mood_colours.bind(true), "Copy the Studio's main, second and element colours into this mood")
-	_button(crow, "Use preset colours", _mood_colours.bind(false), "Let each preset bring its own colours")
-
-	_section(look_box, "Energy and companion")
-	var eg := _grid4(look_box)
-	for item in [["Sensitivity", "sensitivity", 0.5, 1.5], ["Intensity", "intensity", 0.5, 1.5], ["Background motion", "motion", 0.0, 1.5]]:
-		_label(eg, item[0])
-		var sl := _slider(float(m[item[1]]), item[3], func(v: float): music.set_mood_value(mood_name, item[1], v))
-		sl.min_value = item[2]
-		sl.step = 0.05
-		sl.value = float(m[item[1]])
-		_fill(eg, sl)
-	_label(eg, "Dancer")
-	var dancer_pick := OptionButton.new()
-	var names: Array = ["None"] + director.dancer.list_characters()
-	for n in names:
-		dancer_pick.add_item(n)
-	dancer_pick.select(maxi(names.find(m.dancer), 0) if m.dancer != "" else 0)
-	dancer_pick.item_selected.connect(func(i: int): music.set_mood_value(mood_name, "dancer", "" if i == 0 else dancer_pick.get_item_text(i)))
-	_fill(eg, dancer_pick)
-	_label(eg, "Personality")
-	var pers := OptionButton.new()
-	for n in director.dancer.PERSONALITIES:
-		pers.add_item(n.capitalize())
-	pers.select(maxi(director.dancer.PERSONALITIES.find(m.personality), 0))
-	pers.item_selected.connect(func(i: int): music.set_mood_value(mood_name, "personality", director.dancer.PERSONALITIES[i]))
-	_fill(eg, pers)
-
-
-func _on_mood_preset_toggled(on: bool, pname: String) -> void:
-	var m: Dictionary = music.mood(music.active_mood)
-	var list: Array = Array(m.presets).duplicate()
-	if on and not (pname in list):
-		list.append(pname)
-	elif not on:
-		list.erase(pname)
-	music.set_mood_value(music.active_mood, "presets", list)
-	_rebuild_mood_look(true)
-
-
-func _on_mood_bg_toggled(on: bool, file: String) -> void:
-	var list: Array = Array(music.mood(music.active_mood).backgrounds).duplicate()
-	if on and not (file in list):
-		list.append(file)
-	elif not on:
-		list.erase(file)
-	music.set_mood_value(music.active_mood, "backgrounds", list)
-
-
-func _on_mood_color(c: Color, idx: int) -> void:
-	var m: Dictionary = music.mood(music.active_mood)
-	var cols: Array = Array(m.colors).duplicate() if m.colors.size() >= 2 else Array(director.working.colors).duplicate()
-	cols[idx] = "#" + c.to_html(false)
-	music.set_mood_value(music.active_mood, "colors", cols)
-
-
-func _mood_colours(use_studio: bool) -> void:
-	if music.active_mood == music.ALL_MUSIC:
-		return
-	music.set_mood_value(music.active_mood, "colors", Array(director.working.colors).duplicate() if use_studio else [])
-	music.set_mood_value(music.active_mood, "palette", Array(director.working.palette).duplicate() if use_studio else [])
-	_rebuild_mood_look(true)
-
-
-## Saves the look on screen as a preset that belongs to the browsed mood.
-func _save_look_to_mood() -> void:
-	var mood_name: String = music.active_mood
-	if mood_name == music.ALL_MUSIC:
-		return
-	var saved: String = director.save_working(director.presets.unique_name(mood_name + " look"))
-	var list: Array = Array(music.mood(mood_name).presets).duplicate()
-	list.append(saved)
-	music.set_mood_value(mood_name, "presets", list)
-	_rebuild_mood_look(true)
-
-
-func _build_settings_tab(tabs: TabContainer) -> void:
-	var col := _scroll_tab(tabs, "Settings")
-	var g := _grid4(col)
-	_label(g, "Audio source")
-	source_select.add_item("TinserBox player")
-	source_select.add_item("System audio")
-	source_select.tooltip_text = "System audio: visualize whatever Windows is playing (Spotify, a browser, games). Control playback in that app; the visuals follow."
-	source_select.item_selected.connect(func(i: int):
-		if not music.set_source(["player", "system"][i]):
-			source_select.select(0))
-	_fill(g, source_select)
-	_label(g, "Quality")
-	var quality := OptionButton.new()
-	for q in ["Performance", "Balanced", "Quality"]:
-		quality.add_item(q)
-	quality.select(Common.quality)
-	quality.tooltip_text = "Particle counts, trail length, glow and background effects"
-	quality.item_selected.connect(func(i: int):
-		Common.quality = i as Common.Quality
-		music.set_app_setting("quality", i))
-	_fill(g, quality)
-	_setting_check(g, "Song pop-up", "track_notification", true, "Briefly show the title and artist when a song starts")
-	_setting_check(g, "Pop-up in H mode", "notify_in_immersive", false, "Also show the track notification while the interface is hidden with H")
-	_label(g, "Scrolling title")
-	scroll_toggle.button_pressed = music.app_setting("scrolling_title", true)
-	scroll_toggle.toggled.connect(func(on: bool): music.set_app_setting("scrolling_title", on))
-	_fill(g, scroll_toggle)
-	_label(g, "Hide frame")
-	frame_toggle.button_pressed = music.app_setting("hide_frame", false)
-	frame_toggle.tooltip_text = "Hide the window title bar and borders while the interface is hidden"
-	frame_toggle.toggled.connect(func(on: bool): music.set_app_setting("hide_frame", on))
-	_fill(g, frame_toggle)
-	_setting_check(g, "Beat light", "beat_light", true, "Gentle light pulse on strong beats (never strobes)", func(_on): director.apply_preset(director.working, false))
-	_label(g, "Beat strength")
-	var bl := _slider(float(music.app_setting("beat_light_strength", 1.0)) * 100.0, 150.0, func(v: float): music.set_app_setting("beat_light_strength", v / 100.0))
-	_fill(g, bl)
-	_label(g, "Fallback image")
-	var fallback := OptionButton.new()
-	fallback.add_item("Forest")
-	fallback.add_item("Procedural")
-	fallback.select(1 if music.app_setting("fallback_procedural", false) else 0)
-	fallback.item_selected.connect(func(i: int):
-		music.set_app_setting("fallback_procedural", i == 1)
-		director.background.fallback_procedural = i == 1
-		director.background.current_key = ""
-		director._on_track_changed(music.current))
-	_fill(g, fallback)
-	_setting_check(g, "Shots hide UI", "screenshot_hide_ui", true, "Leave the interface out of screenshots")
-
-	_section(col, "Screenshots")
-	var shot_row := HBoxContainer.new()
-	shot_row.add_theme_constant_override("separation", 8)
-	col.add_child(shot_row)
-	shot_dir_label.size_flags_horizontal = SIZE_EXPAND_FILL
-	shot_dir_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	shot_dir_label.text = director.screenshot_dir()
-	shot_row.add_child(shot_dir_label)
-	_button(shot_row, "Choose folder", _choose_screenshot_dir, "Where screenshots are saved")
-	_button(shot_row, "Take screenshot", func(): director.take_screenshot(), "Save a PNG of the visualizer (%s)" % music.app_setting("screenshot_key", "F12"))
-	_button(shot_row, "Diagnostics", _toggle_diag, "Show or hide the diagnostics overlay (F3)")
 
 	_section(col, "Recording")
 	var rec_row := HBoxContainer.new()
@@ -711,6 +444,45 @@ func _build_settings_tab(tabs: TabContainer) -> void:
 		file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
 		file_dialog.set_meta("purpose", "recordings")
 		file_dialog.popup_centered_ratio(0.7), "Where recordings are saved")
+
+
+func _build_settings_tab(tabs: TabContainer) -> void:
+	var col := _scroll_tab(tabs, "Settings")
+	var g := _grid4(col)
+	_label(g, "Quality")
+	var quality := OptionButton.new()
+	for q in ["Performance", "Balanced", "Quality"]:
+		quality.add_item(q)
+	quality.select(Common.quality)
+	quality.tooltip_text = "Particle counts, trail length, glow and background effects"
+	quality.item_selected.connect(func(i: int):
+		Common.quality = i as Common.Quality
+		music.set_app_setting("quality", i))
+	_fill(g, quality)
+	_setting_check(g, "Song pop-up", "track_notification", true, "Briefly show the title and artist when a song starts")
+	_setting_check(g, "Pop-up in H mode", "notify_in_immersive", false, "Also show the track notification while the interface is hidden with H")
+	_label(g, "Scrolling title")
+	scroll_toggle.button_pressed = music.app_setting("scrolling_title", true)
+	scroll_toggle.toggled.connect(func(on: bool): music.set_app_setting("scrolling_title", on))
+	_fill(g, scroll_toggle)
+	_label(g, "Hide frame")
+	frame_toggle.button_pressed = music.app_setting("hide_frame", false)
+	frame_toggle.tooltip_text = "Hide the window title bar and borders while the interface is hidden"
+	frame_toggle.toggled.connect(func(on: bool): music.set_app_setting("hide_frame", on))
+	_fill(g, frame_toggle)
+	_setting_check(g, "Shots hide UI", "screenshot_hide_ui", true, "Leave the interface out of screenshots")
+
+	_section(col, "Screenshots")
+	var shot_row := HBoxContainer.new()
+	shot_row.add_theme_constant_override("separation", 8)
+	col.add_child(shot_row)
+	shot_dir_label.size_flags_horizontal = SIZE_EXPAND_FILL
+	shot_dir_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	shot_dir_label.text = director.screenshot_dir()
+	shot_row.add_child(shot_dir_label)
+	_button(shot_row, "Choose folder", _choose_screenshot_dir, "Where screenshots are saved")
+	_button(shot_row, "Take screenshot", func(): director.take_screenshot(), "Save a PNG of the visualizer (%s)" % music.app_setting("screenshot_key", "F12"))
+	_button(shot_row, "Diagnostics", _toggle_diag, "Show or hide the diagnostics overlay (F3)")
 
 	_section(col, "Keys")
 	var help := Label.new()
@@ -914,7 +686,6 @@ func _refresh_playlist() -> void:
 	sort_select.tooltip_text = "Sort All Music" if not in_mood else "Moods keep their own order: drag songs to reorder"
 	_refresh_moods()
 	_highlight_current()
-	_rebuild_mood_look()
 
 
 func _refresh_moods() -> void:
@@ -923,38 +694,12 @@ func _refresh_moods() -> void:
 	for n in music.mood_names():
 		var playing_here: bool = n == music.playing_mood and music.current_path != ""
 		var count: int = music.library.size() if n == music.ALL_MUSIC else music.mood(n).tracks.size()
-		var row := mood_list.add_item("%s  (%d)%s" % [n, count, "  - now" if playing_here else ""], _mood_icon(n))
+		var row := mood_list.add_item("%s  (%d)%s" % [n, count, "  - now" if playing_here else ""])
 		mood_list.set_item_metadata(row, n)
 		if playing_here:
 			mood_list.set_item_custom_fg_color(row, GOLD.lightened(0.25))
 	mood_list.select(maxi(music.mood_names().find(music.active_mood), 0))
 	syncing = false
-
-
-## A small thumbnail: the mood's first background, else a swatch of its colours.
-func _mood_icon(mood_name: String) -> Texture2D:
-	var m: Dictionary = music.mood(mood_name)
-	var key := mood_name + str(m.get("backgrounds", [])) + str(m.get("colors", []))
-	if _thumbs.has(key):
-		return _thumbs[key]
-	var img: Image = null
-	for b in m.get("backgrounds", []):
-		var path: String = music.backgrounds_dir.path_join(b)
-		if FileAccess.file_exists(path):
-			img = Image.load_from_file(path)
-			break
-	if img:
-		img.resize(34, 20, Image.INTERPOLATE_BILINEAR)
-	else:
-		var cols: Array = m.get("colors", [])
-		var a := Color(cols[0]) if cols.size() >= 2 else (GOLD if mood_name == music.ALL_MUSIC else Color(0.55, 0.42, 0.25))
-		var b := Color(cols[1]) if cols.size() >= 2 else Color(0.12, 0.16, 0.14)
-		img = Image.create(34, 20, false, Image.FORMAT_RGBA8)
-		for x in 34:
-			for y in 20:
-				img.set_pixel(x, y, a.lerp(b, float(x) / 33.0))
-	_thumbs[key] = ImageTexture.create_from_image(img)
-	return _thumbs[key]
 
 
 func _highlight_current() -> void:
@@ -1017,7 +762,6 @@ func _on_new_mood() -> void:
 func _on_rename_mood() -> void:
 	if music.rename_mood(music.active_mood, mood_name_edit.text):
 		mood_name_edit.text = ""
-		_rebuild_mood_look(true)
 	else:
 		director.show_toast("Select one of your moods and type a new, unused name")
 
@@ -1037,19 +781,6 @@ func _on_delete_mood() -> void:
 		if not dlg.visible:
 			dlg.queue_free())
 	dlg.popup_centered()
-
-
-func _add_preset_to_mood() -> void:
-	var mood_name: String = music.active_mood
-	if mood_name == music.ALL_MUSIC:
-		director.show_toast("Select a mood in the Moods tab first")
-		return
-	var list: Array = Array(music.mood(mood_name).presets).duplicate()
-	if not (director.working_name in list):
-		list.append(director.working_name)
-		music.set_mood_value(mood_name, "presets", list)
-	director.show_toast("%s added to %s" % [director.working_name, mood_name])
-	_rebuild_mood_look(true)
 
 
 ## Songs are dragged with their paths: onto a mood (adds them) or within a mood (reorders).
@@ -1138,7 +869,7 @@ func _on_dir_selected(dir: String) -> void:
 		music.add_folder(dir)
 
 
-# --- Song / Studio sync --------------------------------------------------------------
+# --- Visualizer sync -----------------------------------------------------------------
 
 func _on_track_changed(_index: int) -> void:
 	if music.tracks.is_empty() or music.current_path == "":
@@ -1167,6 +898,30 @@ func _rebuild_mode_grid() -> void:
 	for key in params:
 		var spec: Array = params[key]
 		_studio_slider(mode_grid, spec[0], "main", key, spec[1], spec[2], spec[3])
+
+
+## Forest, Procedural, then the images in the backgrounds folder.
+func _fill_backgrounds() -> void:
+	background_select.clear()
+	background_select.add_item("Forest")
+	background_select.add_item("Procedural")
+	var current := str(music.app_setting("background", ""))
+	var selected := 1 if music.app_setting("fallback_procedural", false) else 0
+	for f in music.list_backgrounds():
+		background_select.add_item(f.get_basename())
+		background_select.set_item_metadata(background_select.item_count - 1, f)
+		if f == current:
+			selected = background_select.item_count - 1
+	background_select.select(selected)
+
+
+func _on_background_selected(i: int) -> void:
+	if i <= 1:
+		music.set_app_setting("fallback_procedural", i == 1)
+		director.background.fallback_procedural = i == 1
+		director.set_background("")
+	else:
+		director.set_background(str(background_select.get_item_metadata(i)))
 
 
 func _studio_color(button: ColorPickerButton, index: int) -> ColorPickerButton:

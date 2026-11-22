@@ -33,7 +33,6 @@ const FLUX_FLOOR := [1.0, 0.8, 2.0]  # Minimum low / high / broadband flux for a
 
 ## User sensitivity (0..2, from the Studio) and per-song multiplier.
 var sensitivity := 1.0
-var song_sensitivity := 1.0
 ## Adaptive gain follows each range's recent peak; off = fixed reference level.
 var adaptive := true
 
@@ -95,10 +94,6 @@ var _vocal_avg := 0.33
 var _loud_peak := 0.5
 var _clock := 0.0
 
-# Song personality statistics (reset per track).
-var stats_time := 0.0
-var stats := {}
-
 
 func _ready() -> void:
 	# Build the chain once; if a previous instance already added effects, reuse them.
@@ -132,7 +127,6 @@ func _ready() -> void:
 	_range_raw.resize(7)
 	_range_peak.resize(7)
 	_range_peak.fill(0.5)
-	reset_song_stats()
 
 
 ## The silent bus for captured system audio: analyzed, never heard (-80 dB after effects).
@@ -153,7 +147,6 @@ func capture_bus() -> String:
 func set_source(new_source: String) -> void:
 	source = new_source
 	suppress_transients(0.6)
-	reset_song_stats()
 
 
 func _effect_index(effect: AudioEffect) -> int:
@@ -166,28 +159,6 @@ func _effect_index(effect: AudioEffect) -> int:
 ## Called on seeks and track changes so the jump in spectrum is not read as a transient.
 func suppress_transients(seconds := 0.35) -> void:
 	_suppress = maxf(_suppress, seconds)
-
-
-func reset_song_stats() -> void:
-	stats_time = 0.0
-	stats = {"loud": 0.0, "bass": 0.0, "treble": 0.0, "mid": 0.0, "onsets": 0, "loud_sq": 0.0}
-
-
-## Average characteristics of the current song so far (null until ~12 s analysed).
-func personality() -> Dictionary:
-	if stats_time < 12.0:
-		return {}
-	var n := stats_time
-	var loud: float = stats.loud / n
-	var dyn := sqrt(maxf(stats.loud_sq / n - loud * loud, 0.0))
-	return {
-		"loudness": loud,
-		"bass": stats.bass / n,
-		"treble": stats.treble / n,
-		"mid": stats.mid / n,
-		"onset_rate": float(stats.onsets) / n,
-		"dynamics": dyn,
-	}
 
 
 func _db_norm(magnitude: float, tilt: float) -> float:
@@ -256,7 +227,7 @@ func _process(delta: float) -> void:
 	silence_amount = _approach(silence_amount, 1.0 if silence else 0.0, 3.0 if silence else 8.0, delta)
 
 	# 4. Bounded automatic gain: references follow peaks up fast and decay slowly (~8 s).
-	var gain := sensitivity * song_sensitivity
+	var gain := sensitivity
 	var sens_ref := 0.85
 	for r in 7:
 		_range_peak[r] = maxf(_range_raw[r], _range_peak[r] - delta * 0.06)
@@ -349,21 +320,10 @@ func _process(delta: float) -> void:
 		var target_tone := 1.0 - 0.5 * clampf(0.5 - (share - _vocal_avg) * 6.0, 0.0, 1.0)
 		tone = lerpf(tone, target_tone, 1.0 - exp(-delta * 1.0))
 
-	# 7. Song personality statistics (only while music is audible).
-	if not silence:
-		stats_time += delta
-		stats.loud += loudness * delta
-		stats.loud_sq += loudness * loudness * delta
-		var total := bass + mid + treble + 0.001
-		stats.bass += bass / total * delta
-		stats.mid += mid / total * delta
-		stats.treble += treble / total * delta
-
 
 func _register_beat(strength: float) -> void:
 	beat = 1.0
 	beat_count += 1
-	stats.onsets += 1
 	_since_beat = 0.0
 	# Rapid beats produce gentler flashes, so fast percussion never strobes.
 	var flash_gain := clampf(_since_flash / 0.6, 0.25, 1.0)

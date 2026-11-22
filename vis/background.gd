@@ -16,7 +16,6 @@ var fx := {
 	"kenburns": 0.5, "parallax": 0.3, "breathing": 0.5, "vignette": 0.45, "dim": 0.2,
 	"wash": 0.1, "blur": 0.0, "bloom": 0.25, "shimmer": 0.3,
 }
-var motion_scale := 1.0  # Per-song "background motion" multiplier.
 var wash_color := Color(1.0, 0.8, 0.5)
 var fallback_procedural := false
 var tex_current: Texture2D
@@ -131,12 +130,12 @@ func _process(delta: float) -> void:
 	breath = Common.approach(breath, bass * 0.7 + (audio.kick * 0.3 if audio else 0.0), 6.0, delta)
 	bloom_boost = Common.approach(bloom_boost, maxf(delta_e, 0.0) * 1.5 + loud * 0.3, 1.5, delta)
 
-	var kb: float = fx.kenburns * motion_scale
+	var kb: float = fx.kenburns
 	var zoom: float = 1.0 + 0.045 * kb * (0.5 + 0.5 * sin(t * 0.021)) + 0.018 * fx.breathing * breath + 0.012
 	var margin: float = (1.0 - 1.0 / zoom) * 0.5
 	var mouse := get_local_mouse_position() / size - Vector2(0.5, 0.5) if size.x > 0.0 else Vector2.ZERO
 	parallax = parallax.lerp(mouse.clamp(Vector2(-0.5, -0.5), Vector2(0.5, 0.5)) * -0.4, 1.0 - exp(-2.0 * delta))
-	var pan: Vector2 = Vector2(sin(t * 0.013), cos(t * 0.017)) * 0.7 * kb + parallax * fx.parallax * motion_scale
+	var pan: Vector2 = Vector2(sin(t * 0.013), cos(t * 0.017)) * 0.7 * kb + parallax * fx.parallax
 	pan = pan.clamp(Vector2(-1, -1), Vector2(1, 1)) * margin
 
 	var m := shader_material

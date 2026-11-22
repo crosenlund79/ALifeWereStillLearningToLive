@@ -6,4 +6,4 @@ build/
 dist/
 playlists.json
 moods.json
-dancers/
+visualizer.json
